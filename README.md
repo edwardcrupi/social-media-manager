@@ -1,32 +1,51 @@
-# React + TypeScript + Vite
+# Social Media Manager
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Tracks revenue attributed to social media activity via affiliate/UTM short links, with content-queue management for Instagram/TikTok (manual today, OAuth-connected once app review clears).
 
-Currently, two official plugins are available:
+See `/Users/edwardcrupi/.claude/plans/modular-fluttering-newt.md` for the full build plan and roadmap.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Setup
 
-## React Compiler
+1. Create a Supabase project at [supabase.com](https://supabase.com) (free tier is fine).
+2. Copy `.env.local.example` to `.env.local` and fill in your project's URL and anon key (Supabase dashboard -> Project Settings -> API):
+   ```
+   VITE_SUPABASE_URL=
+   VITE_SUPABASE_ANON_KEY=
+   ```
+3. Run the schema migration against your project: open the Supabase SQL editor and paste the contents of `supabase/migrations/0001_init.sql`, or use the CLI:
+   ```
+   supabase link --project-ref <your-project-ref>
+   supabase db push
+   ```
+4. Enable email OTP sign-in: it's on by default under Authentication -> Providers -> Email in the Supabase dashboard.
+5. Install dependencies and run the app:
+   ```
+   npm install
+   npm run dev
+   ```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Sign in with your email (you'll get a magic link) and you're in.
 
-## Expanding the Oxlint configuration
+## Auto-drafted posts from trending topics (optional)
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+`supabase/functions/generate-trend-posts` searches the web for trends in your niche via Claude and drafts posts automatically. It's **off by default** per-user (`automation_settings.auto_posting_enabled = false`) -- turn it on from the Settings page once you've configured a niche description, brand voice, and topic blocklist there.
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+To deploy it:
+```
+supabase secrets set ANTHROPIC_API_KEY=<your-key>
+supabase functions deploy generate-trend-posts
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Then add a scheduled trigger (Supabase Dashboard -> Cron Jobs, or `pg_cron` + `pg_net`) to call the deployed function URL with `POST` on whatever cadence you want (e.g. daily). You can also invoke it manually to test:
+```
+supabase functions invoke generate-trend-posts
+```
+
+**Note**: posts it creates land in your content queue with `status: scheduled` -- they don't reach Instagram/TikTok on their own yet. Actual auto-publishing depends on the OAuth integration work in the roadmap (Phases 4-5 of the plan).
+
+## Scripts
+
+- `npm run dev` -- start the dev server
+- `npm run build` -- type-check and build for production
+- `npm run lint` -- run oxlint
+- `npm run preview` -- preview the production build locally
