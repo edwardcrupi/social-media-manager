@@ -31,6 +31,12 @@ export function QueueItem({
           {post.tag ?? 'Untagged'}
           {post.source === 'auto' && ' · Auto'}
         </span>
+        {post.body && <p className="queue-body">{post.body}</p>}
+        {post.trend_source && (
+          <a className="queue-source-link" href={post.trend_source.url} target="_blank" rel="noreferrer">
+            Source: {post.trend_source.summary || post.trend_source.url}
+          </a>
+        )}
       </div>
       <button className={`status ${post.status === 'draft' ? 'draft' : 'ready'}`} onClick={() => onCycleStatus(post)}>
         <i />
