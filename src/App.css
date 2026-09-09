@@ -23,6 +23,7 @@ nav { margin-top: 30px; }.nav-item { width: 100%; display: flex; align-items: ce
 .empty-state { padding: 30px 0; color: #9a9e98; font-size: 12px; text-align: center; }
 .login-shell { display: grid; place-items: center; min-height: 100vh; background: #f5f5f1; }
 .login-card { width: 320px; padding: 28px; border: 1px solid #e0e0da; border-radius: 6px; background: #fbfbf8; display: flex; flex-direction: column; gap: 14px; }
+.login-card .brand { color: #1e2124; padding-bottom: 0; }
 .login-card h1 { margin: 4px 0 0; font-size: 22px; letter-spacing: -.05em; color: #1e2124; }
 .login-card p { margin: 0; color: #777c79; font-size: 12px; }
 .login-card input { padding: 11px; border: 1px solid #e3d6cd; border-radius: 3px; font-size: 12px; }
