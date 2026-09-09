@@ -26,7 +26,7 @@ export function useSaveAutomationSettings() {
 
       const { data, error } = await supabase
         .from('automation_settings')
-        .upsert({ user_id: user.id, ...update })
+        .upsert({ user_id: user.id, ...update }, { onConflict: 'user_id' })
         .select()
         .single()
       if (error) throw error

@@ -88,9 +88,15 @@ export function SettingsPage() {
             <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
             <span>Enable auto-posting (drafts are scheduled with no manual review)</span>
           </label>
-          <button className="primary-button" type="submit">
-            Save settings
+          <button className="primary-button" type="submit" disabled={saveSettings.isPending}>
+            {saveSettings.isPending ? 'Saving…' : 'Save settings'}
           </button>
+          {saveSettings.isSuccess && <p className="login-sent">Settings saved.</p>}
+          {saveSettings.isError && (
+            <p className="login-error">
+              {saveSettings.error instanceof Error ? saveSettings.error.message : 'Failed to save settings.'}
+            </p>
+          )}
         </form>
       </section>
     </>
