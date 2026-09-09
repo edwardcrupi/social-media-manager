@@ -19,17 +19,23 @@ export function RevenuePage() {
     event.preventDefault()
     const parsedAmount = Number(amount)
     if (!source.trim() || !Number.isFinite(parsedAmount) || parsedAmount <= 0) return
-    createEvent.mutate({
-      source: source.trim(),
-      amount: parsedAmount,
-      occurred_at: new Date().toISOString(),
-      note: note.trim() || null,
-      short_link_id: null,
-      post_id: null,
-    })
-    setSource('')
-    setAmount('')
-    setNote('')
+    createEvent.mutate(
+      {
+        source: source.trim(),
+        amount: parsedAmount,
+        occurred_at: new Date().toISOString(),
+        note: note.trim() || null,
+        short_link_id: null,
+        post_id: null,
+      },
+      {
+        onSuccess: () => {
+          setSource('')
+          setAmount('')
+          setNote('')
+        },
+      },
+    )
   }
 
   return (
@@ -65,9 +71,14 @@ export function RevenuePage() {
             style={{ maxWidth: 120 }}
           />
           <input placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
-          <button className="primary-button" type="submit">
-            Log revenue
+          <button className="primary-button" type="submit" disabled={createEvent.isPending}>
+            {createEvent.isPending ? 'Logging…' : 'Log revenue'}
           </button>
+          {createEvent.isError && (
+            <p className="login-error">
+              {createEvent.error instanceof Error ? createEvent.error.message : 'Failed to log revenue.'}
+            </p>
+          )}
         </form>
       </section>
 

@@ -17,17 +17,23 @@ export function ContentQueuePage() {
   function handleSubmit(event: FormEvent) {
     event.preventDefault()
     if (!title.trim()) return
-    createPost.mutate({
-      title: title.trim(),
-      tag: tag.trim() || null,
-      scheduled_for: scheduledFor ? new Date(scheduledFor).toISOString() : null,
-      social_profile_id: profileId || null,
-      body: null,
-    })
-    setTitle('')
-    setTag('')
-    setScheduledFor('')
-    setProfileId('')
+    createPost.mutate(
+      {
+        title: title.trim(),
+        tag: tag.trim() || null,
+        scheduled_for: scheduledFor ? new Date(scheduledFor).toISOString() : null,
+        social_profile_id: profileId || null,
+        body: null,
+      },
+      {
+        onSuccess: () => {
+          setTitle('')
+          setTag('')
+          setScheduledFor('')
+          setProfileId('')
+        },
+      },
+    )
   }
 
   return (
@@ -58,9 +64,14 @@ export function ContentQueuePage() {
               </option>
             ))}
           </select>
-          <button className="primary-button" type="submit">
-            Add to queue
+          <button className="primary-button" type="submit" disabled={createPost.isPending}>
+            {createPost.isPending ? 'Adding…' : 'Add to queue'}
           </button>
+          {createPost.isError && (
+            <p className="login-error">
+              {createPost.error instanceof Error ? createPost.error.message : 'Failed to add post.'}
+            </p>
+          )}
         </form>
       </section>
 

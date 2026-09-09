@@ -20,17 +20,23 @@ export function ProfilesPage() {
   function handleSubmit(event: FormEvent) {
     event.preventDefault()
     if (!displayName.trim() || !handle.trim()) return
-    createProfile.mutate({
-      display_name: displayName.trim(),
-      handle: handle.trim(),
-      platform,
-      accent,
-      tone: null,
-      follower_count: followerCount ? Number(followerCount) : null,
-    })
-    setDisplayName('')
-    setHandle('')
-    setFollowerCount('')
+    createProfile.mutate(
+      {
+        display_name: displayName.trim(),
+        handle: handle.trim(),
+        platform,
+        accent,
+        tone: null,
+        follower_count: followerCount ? Number(followerCount) : null,
+      },
+      {
+        onSuccess: () => {
+          setDisplayName('')
+          setHandle('')
+          setFollowerCount('')
+        },
+      },
+    )
   }
 
   return (
@@ -68,9 +74,14 @@ export function ProfilesPage() {
             onChange={(e) => setFollowerCount(e.target.value)}
             style={{ maxWidth: 120 }}
           />
-          <button className="primary-button" type="submit">
-            Add profile
+          <button className="primary-button" type="submit" disabled={createProfile.isPending}>
+            {createProfile.isPending ? 'Adding…' : 'Add profile'}
           </button>
+          {createProfile.isError && (
+            <p className="login-error">
+              {createProfile.error instanceof Error ? createProfile.error.message : 'Failed to add profile.'}
+            </p>
+          )}
         </form>
       </section>
 

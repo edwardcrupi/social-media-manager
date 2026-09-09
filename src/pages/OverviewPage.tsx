@@ -31,9 +31,15 @@ export function OverviewPage() {
   function handleComposerSubmit(event: FormEvent) {
     event.preventDefault()
     if (!draft.trim()) return
-    createPost.mutate({ title: draft.trim() })
-    setDraft('')
-    setShowComposer(false)
+    createPost.mutate(
+      { title: draft.trim() },
+      {
+        onSuccess: () => {
+          setDraft('')
+          setShowComposer(false)
+        },
+      },
+    )
   }
 
   const firstName = user?.email?.split('@')[0] ?? 'there'
@@ -102,9 +108,14 @@ export function OverviewPage() {
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
           />
-          <button className="primary-button" type="submit">
-            Save draft
+          <button className="primary-button" type="submit" disabled={createPost.isPending}>
+            {createPost.isPending ? 'Saving…' : 'Save draft'}
           </button>
+          {createPost.isError && (
+            <p className="login-error">
+              {createPost.error instanceof Error ? createPost.error.message : 'Failed to save draft.'}
+            </p>
+          )}
         </form>
       )}
     </>
