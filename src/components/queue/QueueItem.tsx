@@ -1,7 +1,7 @@
 import type { PostRow, PostStatus } from '../../types/database'
 
 const dateColors = ['coral', 'yellow', 'blue']
-const STATUS_CYCLE: PostStatus[] = ['draft', 'ready', 'scheduled', 'published']
+const STATUSES: PostStatus[] = ['draft', 'ready', 'scheduled', 'published']
 
 const dayFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 const timeFormatter = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' })
@@ -9,12 +9,12 @@ const timeFormatter = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute
 export function QueueItem({
   post,
   index,
-  onCycleStatus,
+  onStatusChange,
   onDelete,
 }: {
   post: PostRow
   index: number
-  onCycleStatus: (post: PostRow) => void
+  onStatusChange: (post: PostRow, status: PostStatus) => void
   onDelete: (post: PostRow) => void
 }) {
   const scheduled = post.scheduled_for ? new Date(post.scheduled_for) : null
@@ -38,18 +38,21 @@ export function QueueItem({
           </a>
         )}
       </div>
-      <button className={`status ${post.status === 'draft' ? 'draft' : 'ready'}`} onClick={() => onCycleStatus(post)}>
-        <i />
-        {post.status}
-      </button>
+      <select
+        className={`status ${post.status === 'draft' ? 'draft' : 'ready'}`}
+        value={post.status}
+        onChange={(event) => onStatusChange(post, event.target.value as PostStatus)}
+        aria-label="Post status"
+      >
+        {STATUSES.map((status) => (
+          <option key={status} value={status}>
+            {status}
+          </option>
+        ))}
+      </select>
       <button className="more-button" onClick={() => onDelete(post)} aria-label="Delete post">
         x
       </button>
     </div>
   )
-}
-
-export function nextStatus(status: PostStatus): PostStatus {
-  const index = STATUS_CYCLE.indexOf(status)
-  return STATUS_CYCLE[(index + 1) % STATUS_CYCLE.length]
 }

@@ -1,6 +1,6 @@
 import type { PostRow } from '../../types/database'
 import { useDeletePost, useUpdatePost } from '../../hooks/usePosts'
-import { QueueItem, nextStatus } from './QueueItem'
+import { QueueItem } from './QueueItem'
 
 export function QueueList({ posts }: { posts: PostRow[] }) {
   const updatePost = useUpdatePost()
@@ -17,7 +17,7 @@ export function QueueList({ posts }: { posts: PostRow[] }) {
           key={post.id}
           post={post}
           index={index}
-          onCycleStatus={(item) => updatePost.mutate({ id: item.id, update: { status: nextStatus(item.status) } })}
+          onStatusChange={(item, status) => updatePost.mutate({ id: item.id, update: { status } })}
           onDelete={(item) => deletePost.mutate(item.id)}
         />
       ))}
