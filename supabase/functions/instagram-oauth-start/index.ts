@@ -8,16 +8,14 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.116.0'
 
 const GRAPH_VERSION = 'v26.0'
-// Meta renamed the Instagram-specific scopes to an `instagram_business_`
-// prefix (instagram_basic -> instagram_business_basic, etc.); the
-// Page-related scopes are unaffected.
-const SCOPES = [
-  'instagram_business_basic',
-  'pages_show_list',
-  'pages_read_engagement',
-  'instagram_business_manage_insights',
-  'instagram_business_content_publish',
-]
+// `instagram_business_*` scopes belong to the separate "Instagram API with
+// Instagram Login" product (no Facebook Page involved) and are invalid here
+// -- this app uses the Page-linked "Instagram API with Facebook Login" flow.
+// instagram_manage_insights/instagram_content_publish are dropped for now:
+// this app's Instagram product config rejects them as invalid scopes, and
+// nothing in the callback uses insights/publishing yet -- revisit once the
+// core connection (profile + follower count) is proven end-to-end.
+const SCOPES = ['instagram_basic', 'pages_show_list', 'pages_read_engagement']
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
