@@ -8,7 +8,16 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.116.0'
 
 const GRAPH_VERSION = 'v26.0'
-const SCOPES = ['instagram_basic', 'pages_show_list', 'pages_read_engagement', 'instagram_manage_insights', 'instagram_content_publish']
+// Meta renamed the Instagram-specific scopes to an `instagram_business_`
+// prefix (instagram_basic -> instagram_business_basic, etc.); the
+// Page-related scopes are unaffected.
+const SCOPES = [
+  'instagram_business_basic',
+  'pages_show_list',
+  'pages_read_engagement',
+  'instagram_business_manage_insights',
+  'instagram_business_content_publish',
+]
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
