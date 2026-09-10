@@ -28,6 +28,7 @@ export type SocialProfileRow = {
   accent: Accent
   follower_count: number | null
   connection_status: ConnectionStatus
+  external_id: string | null
   created_at: string
   updated_at: string
 }

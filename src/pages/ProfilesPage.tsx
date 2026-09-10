@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useSocialProfiles, useCreateSocialProfile, useDeleteSocialProfile } from '../hooks/useSocialProfiles'
 import type { Accent, Platform } from '../types/database'
+import { supabase } from '../lib/supabase'
 
 const PLATFORMS: Platform[] = ['instagram', 'tiktok', 'pinterest', 'other']
 const ACCENTS: Accent[] = ['coral', 'yellow', 'blue']
@@ -10,12 +12,37 @@ export function ProfilesPage() {
   const { data: profiles, isLoading } = useSocialProfiles()
   const createProfile = useCreateSocialProfile()
   const deleteProfile = useDeleteSocialProfile()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [displayName, setDisplayName] = useState('')
   const [handle, setHandle] = useState('')
   const [platform, setPlatform] = useState<Platform>('instagram')
   const [accent, setAccent] = useState<Accent>('coral')
   const [followerCount, setFollowerCount] = useState('')
+  const [connectError, setConnectError] = useState('')
+  const [connecting, setConnecting] = useState(false)
+
+  const igConnected = searchParams.get('ig_connected')
+  const igError = searchParams.get('ig_error')
+
+  async function handleConnectInstagram() {
+    setConnecting(true)
+    setConnectError('')
+    const { data, error } = await supabase.functions.invoke<{ url: string }>('instagram-oauth-start')
+    if (error || !data?.url) {
+      setConnectError(error?.message ?? 'Failed to start Instagram connection.')
+      setConnecting(false)
+      return
+    }
+    window.location.href = data.url
+  }
+
+  function dismissBanner() {
+    const next = new URLSearchParams(searchParams)
+    next.delete('ig_connected')
+    next.delete('ig_error')
+    setSearchParams(next, { replace: true })
+  }
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -45,9 +72,23 @@ export function ProfilesPage() {
         <div>
           <span className="eyebrow">Accounts</span>
           <h1>Profiles</h1>
-          <p>Manual accounts today — OAuth connections land once Instagram/TikTok app review clears.</p>
+          <p>Add accounts manually, or connect Instagram directly for live follower counts.</p>
         </div>
+        <button className="primary-button" onClick={handleConnectInstagram} disabled={connecting}>
+          {connecting ? 'Connecting…' : 'Connect Instagram'}
+        </button>
       </div>
+
+      {igConnected && (
+        <p className="login-sent" onClick={dismissBanner} style={{ cursor: 'pointer' }}>
+          Instagram connected. (click to dismiss)
+        </p>
+      )}
+      {(igError || connectError) && (
+        <p className="login-error" onClick={dismissBanner} style={{ cursor: 'pointer' }}>
+          {igError || connectError} (click to dismiss)
+        </p>
+      )}
 
       <section className="panel">
         <form className="composer" onSubmit={handleSubmit}>
