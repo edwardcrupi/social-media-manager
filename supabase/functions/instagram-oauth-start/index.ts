@@ -11,14 +11,21 @@ const GRAPH_VERSION = 'v26.0'
 // `instagram_business_*` scopes belong to the separate "Instagram API with
 // Instagram Login" product (no Facebook Page involved) and are invalid here
 // -- this app uses the Page-linked "Instagram API with Facebook Login" flow.
-// instagram_manage_insights/instagram_content_publish are dropped for now:
-// this app's Instagram product config rejects them as invalid scopes, and
-// nothing in the callback uses insights/publishing yet -- revisit once the
-// core connection (profile + follower count) is proven end-to-end.
-// business_management added because /me/accounts can silently return an
+// instagram_manage_insights/instagram_content_publish originally failed as
+// "Invalid Scopes" because no Instagram-specific Use Case had been added to
+// the Meta app yet (Meta's dashboard now gates permissions behind Use
+// Cases) -- adding "Manage messaging and content on Instagram" fixed that.
+// business_management is needed because /me/accounts can silently return an
 // empty list for Business-type apps without it, even when a Page was
 // selected in the consent screen.
-const SCOPES = ['instagram_basic', 'pages_show_list', 'pages_read_engagement', 'business_management']
+const SCOPES = [
+  'instagram_basic',
+  'pages_show_list',
+  'pages_read_engagement',
+  'business_management',
+  'instagram_manage_insights',
+  'instagram_content_publish',
+]
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
