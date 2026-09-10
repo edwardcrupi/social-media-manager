@@ -15,7 +15,10 @@ const GRAPH_VERSION = 'v26.0'
 // this app's Instagram product config rejects them as invalid scopes, and
 // nothing in the callback uses insights/publishing yet -- revisit once the
 // core connection (profile + follower count) is proven end-to-end.
-const SCOPES = ['instagram_basic', 'pages_show_list', 'pages_read_engagement']
+// business_management added because /me/accounts can silently return an
+// empty list for Business-type apps without it, even when a Page was
+// selected in the consent screen.
+const SCOPES = ['instagram_basic', 'pages_show_list', 'pages_read_engagement', 'business_management']
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
