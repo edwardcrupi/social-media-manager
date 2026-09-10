@@ -53,6 +53,7 @@ export type PostRow = {
   status: PostStatus
   source: PostSource
   trend_source: TrendSource | null
+  media_url: string | null
   scheduled_for: string | null
   published_at: string | null
   created_at: string
@@ -65,6 +66,7 @@ export type PostInsert = {
   tag?: string | null
   status?: PostStatus
   source?: PostSource
+  media_url?: string | null
   trend_source?: TrendSource | null
   scheduled_for?: string | null
   published_at?: string | null

@@ -25,6 +25,7 @@ export function QueueItem({
         <b>{scheduled ? dayFormatter.format(scheduled) : 'Unscheduled'}</b>
         <small>{scheduled ? timeFormatter.format(scheduled) : '—'}</small>
       </span>
+      {post.media_url && <img className="queue-thumb" src={post.media_url} alt="" />}
       <div className="queue-title">
         <strong>{post.title}</strong>
         <span>

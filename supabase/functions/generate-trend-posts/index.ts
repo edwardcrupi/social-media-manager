@@ -1,7 +1,10 @@
 // Deno edge function, run on a schedule (Supabase Dashboard -> Cron Jobs).
 // For each user with automation_settings.auto_posting_enabled = true, asks
 // Claude to search the web for trending topics in their niche and draft a
-// handful of posts, then inserts them into `posts` as `status: 'scheduled'`.
+// handful of posts, generates an image per post via OpenAI, uploads it to
+// Supabase Storage, and inserts everything into `posts` as
+// `status: 'scheduled'` -- publish-scheduled-posts later actually posts
+// these to the connected Instagram account.
 //
 // This intentionally skips structured outputs (`output_config.format`) in
 // favor of a plain-text-JSON instruction: the interaction between structured
@@ -20,6 +23,7 @@ interface TrendPostIdea {
 }
 
 const SCHEDULE_SPACING_HOURS = 12
+const IMAGE_MODEL = 'gpt-image-2.5-flare'
 
 function extractJsonArray(text: string): unknown {
   try {
@@ -44,6 +48,30 @@ function isTrendPostIdea(value: unknown): value is TrendPostIdea {
   )
 }
 
+// deno-lint-ignore no-explicit-any
+async function generateAndUploadImage(supabase: any, openaiApiKey: string, userId: string, idea: TrendPostIdea) {
+  const prompt = `Editorial, photo-realistic Instagram post image illustrating this story: ${idea.title}. Context: ${idea.body}. No embedded text or captions in the image itself.`
+  const res = await fetch('https://api.openai.com/v1/images/generations', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${openaiApiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: IMAGE_MODEL, prompt, size: '1024x1024', quality: 'high' }),
+  })
+  const json = await res.json()
+  if (!res.ok) throw new Error(json?.error?.message ?? 'Image generation failed')
+  const b64 = json.data?.[0]?.b64_json
+  if (!b64) throw new Error('No image data returned from OpenAI')
+
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+  const path = `${userId}/${crypto.randomUUID()}.png`
+  const { error: uploadError } = await supabase.storage
+    .from('post-images')
+    .upload(path, bytes, { contentType: 'image/png' })
+  if (uploadError) throw uploadError
+
+  const { data: publicUrlData } = supabase.storage.from('post-images').getPublicUrl(path)
+  return publicUrlData.publicUrl as string
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') {
     return new Response('Use POST', { status: 405 })
@@ -52,7 +80,8 @@ Deno.serve(async (req) => {
   const supabaseUrl = Deno.env.get('SUPABASE_URL')
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
   const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY')
-  if (!supabaseUrl || !serviceRoleKey || !anthropicApiKey) {
+  const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
+  if (!supabaseUrl || !serviceRoleKey || !anthropicApiKey || !openaiApiKey) {
     return new Response('Missing required environment variables', { status: 500 })
   }
 
@@ -88,6 +117,14 @@ Deno.serve(async (req) => {
         results.push({ userId, created: 0, reason: 'daily cap already reached' })
         continue
       }
+
+      const { data: instagramProfile } = await supabase
+        .from('social_profiles')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('platform', 'instagram')
+        .eq('connection_status', 'connected')
+        .maybeSingle()
 
       const blocklist: string[] = settings.topic_blocklist ?? []
       const prompt = [
@@ -130,23 +167,44 @@ Deno.serve(async (req) => {
 
       const ideas = parsed.filter(isTrendPostIdea).slice(0, remaining)
       const now = Date.now()
-      const rows = ideas.map((idea, index) => ({
-        user_id: userId,
-        title: idea.title,
-        body: idea.body,
-        tag: idea.tag,
-        status: 'scheduled' as const,
-        source: 'auto' as const,
-        trend_source: { url: idea.source_url, summary: idea.source_summary },
-        scheduled_for: new Date(now + (index + 1) * SCHEDULE_SPACING_HOURS * 60 * 60 * 1000).toISOString(),
-      }))
+      const rows = []
+      const imageFailures: string[] = []
+
+      for (let index = 0; index < ideas.length; index++) {
+        const idea = ideas[index]
+        let mediaUrl: string | null = null
+        try {
+          mediaUrl = await generateAndUploadImage(supabase, openaiApiKey, userId, idea)
+        } catch (imageError) {
+          // Skip this idea entirely rather than publish an image-less post --
+          // Instagram cannot publish a text-only feed post.
+          imageFailures.push(imageError instanceof Error ? imageError.message : 'image generation failed')
+          continue
+        }
+        rows.push({
+          user_id: userId,
+          social_profile_id: instagramProfile?.id ?? null,
+          title: idea.title,
+          body: idea.body,
+          tag: idea.tag,
+          status: 'scheduled' as const,
+          source: 'auto' as const,
+          trend_source: { url: idea.source_url, summary: idea.source_summary },
+          media_url: mediaUrl,
+          scheduled_for: new Date(now + (index + 1) * SCHEDULE_SPACING_HOURS * 60 * 60 * 1000).toISOString(),
+        })
+      }
 
       if (rows.length > 0) {
         const { error: insertError } = await supabase.from('posts').insert(rows)
         if (insertError) throw insertError
       }
 
-      results.push({ userId, created: rows.length })
+      results.push({
+        userId,
+        created: rows.length,
+        ...(imageFailures.length > 0 ? { imageFailures } : {}),
+      })
     } catch (error) {
       results.push({ userId, created: 0, reason: error instanceof Error ? error.message : 'unknown error' })
     }
