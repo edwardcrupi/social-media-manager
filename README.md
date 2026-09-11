@@ -1,6 +1,6 @@
 # Social Media Manager
 
-Tracks revenue attributed to social media activity via affiliate/UTM short links, with content-queue management and a real Instagram connection (manual entry for other platforms/TikTok for now).
+Tracks revenue attributed to social media activity via affiliate/UTM short links, with content-queue management, a real Instagram connection, and fully automated posting: Claude finds trending topics in your niche, drafts a caption, OpenAI generates an image, and it publishes to Instagram on schedule with no manual review step.
 
 See `/Users/edwardcrupi/.claude/plans/modular-fluttering-newt.md` for the full build plan and roadmap.
 
@@ -28,20 +28,35 @@ Sign in with your email (you'll get a magic link) and you're in.
 
 ## Auto-drafted posts from trending topics (optional)
 
-`supabase/functions/generate-trend-posts` searches the web for trends in your niche via Claude and drafts posts automatically. It's **off by default** per-user (`automation_settings.auto_posting_enabled = false`) -- turn it on from the Settings page once you've configured a niche description, brand voice, and topic blocklist there.
+`supabase/functions/generate-trend-posts` searches the web for trends in your niche via Claude, drafts a caption, and generates an image for it via OpenAI. It's **off by default** per-user (`automation_settings.auto_posting_enabled = false`) -- turn it on from the Settings page once you've configured a niche description, brand voice, and topic blocklist there.
 
 To deploy it:
 ```
 supabase secrets set ANTHROPIC_API_KEY=<your-key>
+supabase secrets set OPENAI_API_KEY=<your-key>
 supabase functions deploy generate-trend-posts
 ```
 
-Then add a scheduled trigger (Supabase Dashboard -> Cron Jobs, or `pg_cron` + `pg_net`) to call the deployed function URL with `POST` on whatever cadence you want (e.g. daily). You can also invoke it manually to test:
+Both keys need real billing/credits on their respective platforms (platform.openai.com and console.anthropic.com) -- a ChatGPT or Claude.ai/Claude Code subscription does **not** fund these separate developer-API billing pools.
+
+Add a scheduled trigger (Supabase Dashboard -> Cron Jobs, Edge Function type, `POST`) to call it on whatever cadence you want (e.g. daily). You can also invoke it manually to test:
 ```
 supabase functions invoke generate-trend-posts
 ```
 
-**Note**: posts it creates land in your content queue with `status: scheduled` -- they don't reach Instagram/TikTok on their own yet. Actual auto-publishing depends on the publish scopes/function noted in the Instagram section below.
+Posts land in your content queue with `status: scheduled`, `media_url` set to the generated image (stored in the public `post-images` Storage bucket), and linked to your connected Instagram profile if one exists.
+
+## Auto-publishing to Instagram
+
+`supabase/functions/publish-scheduled-posts` finds posts whose `scheduled_for` has passed (and which have both a linked, connected Instagram profile and a `media_url`) and actually publishes them via Instagram's Content Publishing API -- **no manual review step**, per this project's design: once a post is due, it goes live unattended.
+
+Deploy and schedule it:
+```
+supabase functions deploy publish-scheduled-posts
+```
+Then add a Supabase Cron Job (Edge Function type, `POST`, pointed at `publish-scheduled-posts`) running every 15 minutes. Two things the cron job form needs that aren't obvious:
+- **HTTP Headers**: add `apikey` and `Authorization: Bearer <your anon/publishable key>` -- the function requires a valid Supabase JWT, and the cron trigger doesn't send one by default.
+- **Timeout**: capped at 5000ms by the platform. The function can occasionally take longer than that to finish (Instagram's media-processing step is polled), but the Edge Function keeps running server-side past that timeout regardless -- check `posts.status` in the app, not the cron job's own log, to know if a publish actually succeeded.
 
 ## Connecting Instagram
 
@@ -69,7 +84,7 @@ One-time setup:
    supabase functions deploy instagram-oauth-callback --no-verify-jwt
    ```
 
-Current scopes requested: `instagram_basic`, `pages_show_list`, `pages_read_engagement`, `business_management` -- enough for the connection itself and basic profile/follower data. `instagram_manage_insights` and `instagram_content_publish` are rejected as invalid by this flow's product configuration as currently set up; real insights and auto-publishing need that sorted out first (see the plan file's Phase 4 notes for what's been ruled out so far).
+Current scopes requested: `instagram_basic`, `pages_show_list`, `pages_read_engagement`, `business_management`, `instagram_manage_insights`, `instagram_content_publish`. The insights/publish scopes initially failed as "Invalid Scopes" -- not a naming issue, but because Meta's dashboard gates them behind a **Use Case** that has to be added first: My Apps -> Use cases -> Add use cases -> "Manage messaging and content on Instagram". Once added and showing "ready for testing," both scopes work immediately with no App Review needed.
 
 ## Scripts
 
