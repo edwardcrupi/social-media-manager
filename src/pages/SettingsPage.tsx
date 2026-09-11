@@ -10,6 +10,7 @@ export function SettingsPage() {
   const [brandVoice, setBrandVoice] = useState('')
   const [blocklist, setBlocklist] = useState('')
   const [dailyCap, setDailyCap] = useState(2)
+  const [dailyReelCap, setDailyReelCap] = useState(1)
   const [enabled, setEnabled] = useState(false)
 
   useEffect(() => {
@@ -18,6 +19,7 @@ export function SettingsPage() {
     setBrandVoice(settings.brand_voice ?? '')
     setBlocklist(settings.topic_blocklist.join(', '))
     setDailyCap(settings.daily_auto_post_cap)
+    setDailyReelCap(settings.daily_reel_cap)
     setEnabled(settings.auto_posting_enabled)
   }, [settings])
 
@@ -31,6 +33,7 @@ export function SettingsPage() {
         .map((topic) => topic.trim())
         .filter(Boolean),
       daily_auto_post_cap: dailyCap,
+      daily_reel_cap: dailyReelCap,
       auto_posting_enabled: enabled,
     })
   }
@@ -74,13 +77,24 @@ export function SettingsPage() {
             />
           </label>
           <label>
-            <span>Daily auto-post cap</span>
+            <span>Daily auto-post cap (images)</span>
             <input
               type="number"
               min={0}
               max={10}
               value={dailyCap}
               onChange={(e) => setDailyCap(Number(e.target.value))}
+              style={{ maxWidth: 100 }}
+            />
+          </label>
+          <label>
+            <span>Daily reel cap (video — costs far more per post, keep this low)</span>
+            <input
+              type="number"
+              min={0}
+              max={5}
+              value={dailyReelCap}
+              onChange={(e) => setDailyReelCap(Number(e.target.value))}
               style={{ maxWidth: 100 }}
             />
           </label>

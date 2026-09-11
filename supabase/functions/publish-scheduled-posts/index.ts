@@ -7,11 +7,10 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.116.0'
 
 const GRAPH_VERSION = 'v26.0'
-const CONTAINER_POLL_ATTEMPTS = 5
-const CONTAINER_POLL_DELAY_MS = 2000
+const CONTAINER_POLL_DELAY_MS = 3000
 
-async function waitForContainerReady(igUserId: string, creationId: string, accessToken: string) {
-  for (let attempt = 0; attempt < CONTAINER_POLL_ATTEMPTS; attempt++) {
+async function waitForContainerReady(igUserId: string, creationId: string, accessToken: string, maxAttempts: number) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const statusUrl = new URL(`https://graph.facebook.com/${GRAPH_VERSION}/${creationId}`)
     statusUrl.searchParams.set('fields', 'status_code')
     statusUrl.searchParams.set('access_token', accessToken)
@@ -39,7 +38,7 @@ Deno.serve(async (req) => {
 
   const { data: duePosts, error: postsError } = await supabase
     .from('posts')
-    .select('id, body, media_url, social_profile_id')
+    .select('id, body, media_url, media_type, social_profile_id')
     .eq('status', 'scheduled')
     .not('social_profile_id', 'is', null)
     .not('media_url', 'is', null)
@@ -74,8 +73,14 @@ Deno.serve(async (req) => {
       const igUserId = profile.external_id
       const accessToken = secret.access_token as string
 
+      const isVideo = post.media_type === 'video'
       const createUrl = new URL(`https://graph.facebook.com/${GRAPH_VERSION}/${igUserId}/media`)
-      createUrl.searchParams.set('image_url', post.media_url as string)
+      if (isVideo) {
+        createUrl.searchParams.set('media_type', 'REELS')
+        createUrl.searchParams.set('video_url', post.media_url as string)
+      } else {
+        createUrl.searchParams.set('image_url', post.media_url as string)
+      }
       createUrl.searchParams.set('caption', (post.body as string) ?? '')
       createUrl.searchParams.set('access_token', accessToken)
       const createRes = await fetch(createUrl, { method: 'POST' })
@@ -83,7 +88,8 @@ Deno.serve(async (req) => {
       if (!createRes.ok) throw new Error(createJson?.error?.message ?? 'Failed to create media container')
       const creationId = createJson.id as string
 
-      await waitForContainerReady(igUserId, creationId, accessToken)
+      // Video containers take longer to process than images.
+      await waitForContainerReady(igUserId, creationId, accessToken, isVideo ? 20 : 5)
 
       const publishUrl = new URL(`https://graph.facebook.com/${GRAPH_VERSION}/${igUserId}/media_publish`)
       publishUrl.searchParams.set('creation_id', creationId)

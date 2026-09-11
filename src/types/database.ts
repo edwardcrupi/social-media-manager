@@ -10,8 +10,9 @@
 export type Platform = 'instagram' | 'tiktok' | 'pinterest' | 'other'
 export type Accent = 'coral' | 'yellow' | 'blue'
 export type ConnectionStatus = 'manual' | 'pending' | 'connected' | 'error'
-export type PostStatus = 'draft' | 'ready' | 'scheduled' | 'published'
+export type PostStatus = 'draft' | 'ready' | 'generating' | 'scheduled' | 'published'
 export type PostSource = 'manual' | 'auto'
+export type MediaType = 'image' | 'video'
 
 export type TrendSource = {
   url: string
@@ -54,6 +55,8 @@ export type PostRow = {
   source: PostSource
   trend_source: TrendSource | null
   media_url: string | null
+  media_type: MediaType
+  video_job_id: string | null
   scheduled_for: string | null
   published_at: string | null
   created_at: string
@@ -67,6 +70,8 @@ export type PostInsert = {
   status?: PostStatus
   source?: PostSource
   media_url?: string | null
+  media_type?: MediaType
+  video_job_id?: string | null
   trend_source?: TrendSource | null
   scheduled_for?: string | null
   published_at?: string | null
@@ -134,6 +139,7 @@ export type AutomationSettingsRow = {
   brand_voice: string | null
   topic_blocklist: string[]
   daily_auto_post_cap: number
+  daily_reel_cap: number
   auto_posting_enabled: boolean
   updated_at: string
 }

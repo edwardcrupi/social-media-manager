@@ -1,7 +1,7 @@
 import type { PostRow, PostStatus } from '../../types/database'
 
 const dateColors = ['coral', 'yellow', 'blue']
-const STATUSES: PostStatus[] = ['draft', 'ready', 'scheduled', 'published']
+const STATUSES: PostStatus[] = ['draft', 'ready', 'generating', 'scheduled', 'published']
 
 const dayFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 const timeFormatter = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' })
@@ -25,11 +25,16 @@ export function QueueItem({
         <b>{scheduled ? dayFormatter.format(scheduled) : 'Unscheduled'}</b>
         <small>{scheduled ? timeFormatter.format(scheduled) : '—'}</small>
       </span>
-      {post.media_url && <img className="queue-thumb" src={post.media_url} alt="" />}
+      {post.media_url && post.media_type === 'video' && (
+        <video className="queue-thumb" src={post.media_url} muted playsInline />
+      )}
+      {post.media_url && post.media_type === 'image' && <img className="queue-thumb" src={post.media_url} alt="" />}
+      {!post.media_url && post.status === 'generating' && <span className="queue-thumb queue-thumb-pending">⏳</span>}
       <div className="queue-title">
         <strong>{post.title}</strong>
         <span>
           {post.tag ?? 'Untagged'}
+          {post.media_type === 'video' && ' · Reel'}
           {post.source === 'auto' && ' · Auto'}
         </span>
         {post.body && <p className="queue-body">{post.body}</p>}
@@ -40,7 +45,7 @@ export function QueueItem({
         )}
       </div>
       <select
-        className={`status ${post.status === 'draft' ? 'draft' : 'ready'}`}
+        className={`status ${post.status === 'draft' || post.status === 'generating' ? 'draft' : 'ready'}`}
         value={post.status}
         onChange={(event) => onStatusChange(post, event.target.value as PostStatus)}
         aria-label="Post status"
