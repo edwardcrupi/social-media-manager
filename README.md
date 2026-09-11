@@ -2,7 +2,7 @@
 
 Tracks revenue attributed to social media activity via affiliate/UTM short links, with content-queue management, a real Instagram connection, and fully automated posting: Claude finds trending topics in your niche, drafts a caption, OpenAI generates an image, and it publishes to Instagram on schedule with no manual review step.
 
-See `/Users/edwardcrupi/.claude/plans/modular-fluttering-newt.md` for the full build plan and roadmap.
+See [`PLAN.md`](./PLAN.md) for the full build plan, current status, and remaining phases (TikTok integration, real Instagram insights).
 
 ## Setup
 
