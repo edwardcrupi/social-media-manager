@@ -50,7 +50,12 @@ function isTrendPostIdea(value: unknown): value is TrendPostIdea {
 
 // deno-lint-ignore no-explicit-any
 async function generateAndUploadImage(supabase: any, openaiApiKey: string, userId: string, idea: TrendPostIdea) {
-  const prompt = `Editorial, photo-realistic Instagram post image illustrating this story: ${idea.title}. Context: ${idea.body}. No embedded text or captions in the image itself.`
+  const prompt = [
+    `Editorial, photo-realistic Instagram post image illustrating this story: ${idea.title}. Context: ${idea.body}.`,
+    `Overlay this exact headline text on the image, large and clearly legible: "${idea.title}".`,
+    'Place the text in the lower third over a dark semi-transparent gradient scrim so it stays readable against the photo behind it.',
+    'Use bold, clean sans-serif typography, spelled correctly, no other text or logos anywhere in the image.',
+  ].join(' ')
   const res = await fetch('https://api.openai.com/v1/images/generations', {
     method: 'POST',
     headers: { Authorization: `Bearer ${openaiApiKey}`, 'Content-Type': 'application/json' },
