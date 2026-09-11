@@ -117,7 +117,11 @@ Deno.serve(async (req) => {
         .eq('source', 'auto')
         .gte('created_at', startOfDay.toISOString())
 
-      const remaining = Math.max(0, settings.daily_auto_post_cap - (alreadyToday ?? 0))
+      // Capped independently of daily_auto_post_cap: even with concurrent
+      // image generation, too many at once risks OpenAI rate limits and
+      // Supabase's 150s function execution limit. A high daily cap just
+      // means more invocations are needed to reach it, not bigger ones.
+      const remaining = Math.min(4, Math.max(0, settings.daily_auto_post_cap - (alreadyToday ?? 0)))
       if (remaining === 0) {
         results.push({ userId, created: 0, reason: 'daily cap already reached' })
         continue
@@ -172,18 +176,25 @@ Deno.serve(async (req) => {
 
       const ideas = parsed.filter(isTrendPostIdea).slice(0, remaining)
       const now = Date.now()
-      const rows = []
       const imageFailures: string[] = []
 
+      // Run image generations concurrently -- Supabase Edge Functions have a
+      // hard 150s execution limit, and generating images sequentially for
+      // more than 2-3 ideas blows past that. Concurrent requests bound the
+      // wall-clock time to the slowest single image instead of the sum.
+      const imageResults = await Promise.allSettled(
+        ideas.map((idea) => generateAndUploadImage(supabase, openaiApiKey, userId, idea)),
+      )
+
+      const rows = []
       for (let index = 0; index < ideas.length; index++) {
         const idea = ideas[index]
-        let mediaUrl: string | null = null
-        try {
-          mediaUrl = await generateAndUploadImage(supabase, openaiApiKey, userId, idea)
-        } catch (imageError) {
+        const imageResult = imageResults[index]
+        if (imageResult.status === 'rejected') {
           // Skip this idea entirely rather than publish an image-less post --
           // Instagram cannot publish a text-only feed post.
-          imageFailures.push(imageError instanceof Error ? imageError.message : 'image generation failed')
+          const reason = imageResult.reason
+          imageFailures.push(reason instanceof Error ? reason.message : 'image generation failed')
           continue
         }
         rows.push({
@@ -195,7 +206,7 @@ Deno.serve(async (req) => {
           status: 'scheduled' as const,
           source: 'auto' as const,
           trend_source: { url: idea.source_url, summary: idea.source_summary },
-          media_url: mediaUrl,
+          media_url: imageResult.value,
           scheduled_for: new Date(now + (index + 1) * SCHEDULE_SPACING_HOURS * 60 * 60 * 1000).toISOString(),
         })
       }
