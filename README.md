@@ -86,6 +86,23 @@ One-time setup:
 
 Current scopes requested: `instagram_basic`, `pages_show_list`, `pages_read_engagement`, `business_management`, `instagram_manage_insights`, `instagram_content_publish`. The insights/publish scopes initially failed as "Invalid Scopes" -- not a naming issue, but because Meta's dashboard gates them behind a **Use Case** that has to be added first: My Apps -> Use cases -> Add use cases -> "Manage messaging and content on Instagram". Once added and showing "ready for testing," both scopes work immediately with no App Review needed.
 
+## Auto-generated video Reels (optional)
+
+`supabase/functions/generate-reel-posts` drafts a vertical (9:16) video concept + caption via Claude and submits it to **Seedance 2.5** for generation via **BytePlus ModelArk** -- not Volcano Engine (Seedance's domestic ByteDance platform), which reportedly requires China real-name ID verification international users can't complete. BytePlus is the separate, English-documented, international route to the same model.
+
+Video generation is asynchronous and takes minutes, so this is two functions, not one:
+```
+supabase secrets set ARK_API_KEY=<your-byteplus-key>
+supabase functions deploy generate-reel-posts
+supabase functions deploy check-video-jobs
+```
+- `generate-reel-posts`: drafts the concept and submits the job; the post lands in your queue as `status: generating`. **Before first use**, activate the model in the BytePlus Ark Console (Model Management -> find `dreamina-seedance-2-5-260628` -> activate) -- having an API key alone isn't enough, same shape as OpenAI/Anthropic billing setup.
+- `check-video-jobs` (needs its own cron, every 3-5 min): polls for finished jobs, downloads the video into the public `post-videos` bucket, and flips the post to `scheduled` once ready.
+
+Cost is meaningfully higher than image posts (~10-20x per post), so `automation_settings.daily_reel_cap` is deliberately separate from `daily_auto_post_cap` and defaults to 1/day -- adjust it in Settings.
+
+`publish-scheduled-posts` already knows how to publish these as Instagram Reels (`media_type=REELS`) once `check-video-jobs` marks one `scheduled` -- no separate deploy needed for that part, just redeploy `publish-scheduled-posts` if you haven't already picked up that change.
+
 ## Scripts
 
 - `npm run dev` -- start the dev server
