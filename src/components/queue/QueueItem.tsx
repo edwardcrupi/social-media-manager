@@ -26,7 +26,10 @@ export function QueueItem({
         <small>{scheduled ? timeFormatter.format(scheduled) : '—'}</small>
       </span>
       {post.media_url && post.media_type === 'video' && (
-        <video className="queue-thumb" src={post.media_url} muted playsInline />
+        // A bare <video> often renders blank until played; the #t= media
+        // fragment hints the browser to seek there and paint that frame,
+        // giving a poster-like preview without a separate thumbnail asset.
+        <video className="queue-thumb" src={`${post.media_url}#t=0.5`} muted playsInline preload="metadata" />
       )}
       {post.media_url && post.media_type === 'image' && <img className="queue-thumb" src={post.media_url} alt="" />}
       {!post.media_url && post.status === 'generating' && <span className="queue-thumb queue-thumb-pending">⏳</span>}
