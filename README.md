@@ -39,7 +39,7 @@ supabase functions deploy generate-trend-posts
 
 Both keys need real billing/credits on their respective platforms (platform.openai.com and console.anthropic.com) -- a ChatGPT or Claude.ai/Claude Code subscription does **not** fund these separate developer-API billing pools.
 
-Add a scheduled trigger (Supabase Dashboard -> Cron Jobs, Edge Function type, `POST`) to call it on whatever cadence you want (e.g. daily). You can also invoke it manually to test:
+Add a Supabase Cron Job (Edge Function type, `POST`, pointed at `generate-trend-posts`) running **once a day**. It's a separate, much lower-frequency cron than `publish-scheduled-posts` below: generation only needs to run often enough to keep the queue topped up toward each user's `daily_auto_post_cap`, and it already no-ops (skips the Claude/OpenAI calls) once that cap is hit for the day, so running it more often than daily just risks wasted API spend without producing extra posts. Same two things the cron job form needs as `publish-scheduled-posts` (HTTP headers for `apikey`/`Authorization`, since the trigger doesn't send a JWT by default). You can also invoke it manually to test:
 ```
 supabase functions invoke generate-trend-posts
 ```
@@ -102,6 +102,24 @@ supabase functions deploy check-video-jobs
 Cost is meaningfully higher than image posts (~10-20x per post), so `automation_settings.daily_reel_cap` is deliberately separate from `daily_auto_post_cap` and defaults to 1/day -- adjust it in Settings.
 
 `publish-scheduled-posts` already knows how to publish these as Instagram Reels (`media_type=REELS`) once `check-video-jobs` marks one `scheduled` -- no separate deploy needed for that part, just redeploy `publish-scheduled-posts` if you haven't already picked up that change.
+
+## Connecting Impact for revenue tracking
+
+Revenue attribution beyond click counts works via **Impact** postbacks -- not Amazon Associates, whose 2026 reporting changes removed per-order data entirely and left only a manually-exported, 100-Tracking-ID-capped CSV with no live API for individual associates. Impact's publisher postback is real-time and per-conversion instead.
+
+1. Sign up as an Impact publisher and get accepted into an advertiser program relevant to your niche.
+2. Grab that program's tracking link from Impact and paste it as a short link's **destination URL** on the Revenue page, exactly like any other link -- `redirect` automatically appends `subId1=<the short link's slug>` to it, which is how a conversion gets matched back to the right link/post.
+3. Set the postback secret and deploy the function:
+   ```
+   supabase secrets set IMPACT_POSTBACK_TOKEN=<a random value>
+   supabase functions deploy impact-conversion-postback --no-verify-jwt
+   ```
+4. In Impact's dashboard -> Event Notifications, paste this as your postback URL (fill in your own token and project ref):
+   ```
+   https://stkocgwlqfilsedtrjvy.supabase.co/functions/v1/impact-conversion-postback?token=<IMPACT_POSTBACK_TOKEN>&action_id={ActionId}&subid1={SubId1}&amount={Amount}&payout={Payout}&currency={Currency}&status={Status}&campaign={CampaignName}&event_date={EventDate}
+   ```
+
+Conversions land in `revenue_events` with `status: pending`, `confirmed`, or `reversed` (Impact notifies again as a conversion's status changes -- the same action updates in place rather than creating duplicates). The Revenue page excludes `reversed` events from the chart and flags `pending` ones inline.
 
 ## Scripts
 

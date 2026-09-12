@@ -39,6 +39,7 @@ library — this was a deliberate choice, not an oversight.
 | 4 | Instagram OAuth connection | ✅ Done |
 | 5 | Real image generation + auto-publish to Instagram | ✅ Done |
 | 6 | AI-generated video Reels (Seedance) + auto-publish | ✅ Done |
+| 7 | Impact.com live revenue reconciliation | ✅ Done |
 | — | TikTok integration (OAuth + posting) | ❌ Not started |
 | — | Real Instagram insights (reach/engagement data) | ❌ Not started |
 
@@ -66,7 +67,7 @@ Neither of these is blocked on anything technical — just needs deciding to sta
 
 `supabase/functions/generate-trend-posts` — reads `automation_settings` per user (skips if `auto_posting_enabled` is false), calls Claude (`claude-opus-5`) with the `web_search_20260209` server tool to find real trends matching `niche_description` and draft posts in `brand_voice` (skipping `topic_blocklist` topics), parses the JSON response, and inserts rows into `posts` with `source = 'auto'`.
 
-Deployed via `supabase secrets set ANTHROPIC_API_KEY=...` + `supabase functions deploy generate-trend-posts`, run on a Supabase Cron Job (Edge Function type, POST).
+Deployed via `supabase secrets set ANTHROPIC_API_KEY=...` + `supabase functions deploy generate-trend-posts`, run on its own Supabase Cron Job (Edge Function type, POST) at **once a day** — deliberately much lower frequency than `publish-scheduled-posts`' 15-minute cron (Phase 5), since generation only needs to keep the queue topped up toward `daily_auto_post_cap` and the function already no-ops once that cap is reached for the day.
 
 ## Phase 3 — Short links & click tracking (done)
 
@@ -133,6 +134,22 @@ Video generation is genuinely async (5-15 minutes, not seconds), so unlike the i
 
 **Confirmed working end-to-end**, including manually watching the actual generated video content (not just verifying the pipeline plumbed through) — held up on review.
 
+## Phase 7 — Impact.com live revenue reconciliation (done)
+
+`revenue_events` had been manual-entry-only since Phase 1. Two networks were evaluated for automatic reconciliation:
+
+- **Amazon Associates was rejected.** Amazon's March/April 2026 reporting changes removed per-order/per-product data entirely — affiliates now see only a topline earnings number and a per-Tracking-ID summary (capped at 100 Tracking IDs), exportable **only as a manual CSV**. There is no public conversion API or postback for individual associates; a discretionary "S3 Data Feed" exists but requires Amazon support's approval on a case-by-case basis and still only delivers the same daily/periodic Tracking-ID-level aggregate — not real-time, not per-click.
+- **Impact was chosen instead** — already namechecked in the Phase 3 monetization note as a better-fitting network for AI-tool affiliate programs. Impact supports a real **publisher postback**: registering a URL under Impact's dashboard (Event Notifications) that Impact calls per conversion event, substituting macros (`{ActionId}`, `{SubId1}`, `{Amount}`, `{Payout}`, `{Currency}`, `{Status}`, `{StatusDetail}`, `{EventDate}`, `{CampaignName}`). `SubId1` is publisher-controlled at tracking-link-build time — no pre-registration cap like Amazon's Tracking IDs.
+
+Implementation:
+
+- **No new column on `short_links`.** An Impact tracking link is pasted as a short link's existing `destination_url`, same as any other link. `supabase/functions/redirect` now unconditionally appends `subId1=<the short link's slug>` to the outgoing redirect (harmless extra query param on non-affiliate destinations) — this is what lets a conversion notification be matched back to the exact link/post that drove it, reusing the slug that already existed rather than adding new per-link config.
+- `supabase/functions/impact-conversion-postback` (new, `--no-verify-jwt`, public like `redirect` since Impact's servers hit it with no Supabase session): validates a shared-secret `token` query param against `IMPACT_POSTBACK_TOKEN`, looks up the `short_links` row by `slug = subid1`, and upserts into `revenue_events` keyed by `external_ref = 'impact:<ActionId>'`.
+- Schema (`0005_impact_revenue_postback.sql`): `revenue_events.external_ref` (unique per user, nullable) makes the upsert idempotent — Impact re-notifies as a conversion's status changes (e.g. pending → approved, or a later reversal), and the same row updates in place rather than duplicating. `revenue_events.status` (`pending`/`confirmed`/`reversed`) lets the Revenue page treat provisional and voided conversions differently: the chart excludes `reversed` events from totals, and `pending` ones show inline with a "(pending)" marker rather than reading as final.
+- **Gotcha/assumption to verify against real data**: Impact's raw `Status` macro value wasn't independently confirmed beyond secondary sources — the postback function maps `APPROVED`/`LOCKED` → `confirmed` and `REVERSED`/`DECLINED` → `reversed`, defaulting anything else to `pending`. Confirm this against an actual postback payload once a real advertiser program is live and adjust `mapStatus()` in `impact-conversion-postback/index.ts` if Impact's real status strings differ.
+
+Not yet confirmed working end-to-end against a real Impact account — the user had not yet signed up as a publisher at the time this was built. The redirect-appends-subId1 behavior and the postback-to-`revenue_events` upsert logic should both be smoke-tested per the README's setup steps once a real program is approved.
+
 ---
 
 ## Verification checklist
@@ -144,3 +161,4 @@ Video generation is genuinely async (5-15 minutes, not seconds), so unlike the i
 - `generate-trend-posts`: with `auto_posting_enabled = false`, invoke manually and confirm it exits without inserting rows; flip on, re-invoke, confirm posts appear with `source = 'auto'`, a populated `trend_source`, and content respecting the blocklist/brand voice.
 - `generate-reel-posts` / `check-video-jobs`: submit a job, poll until `status: "ready"` in the response, then actually watch the downloaded video before trusting it to run unattended.
 - End-to-end publish: confirm a real Instagram media ID comes back from `publish-scheduled-posts`, for both an image post and a video Reel.
+- Impact postback: curl `redirect/<slug>` and confirm the `Location` header includes `subId1=<slug>`; curl `impact-conversion-postback` with a matching `subid1` and `status=APPROVED`, confirm a `revenue_events` row appears with `status: confirmed`; re-send the same `action_id` with `status=REVERSED` and confirm the same row updates rather than duplicating.

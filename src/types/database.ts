@@ -110,6 +110,8 @@ export type LinkClickRow = {
   country: string | null
 }
 
+export type RevenueEventStatus = 'pending' | 'confirmed' | 'reversed'
+
 export type RevenueEventRow = {
   id: string
   user_id: string
@@ -119,6 +121,8 @@ export type RevenueEventRow = {
   amount: number
   currency: string
   occurred_at: string
+  status: RevenueEventStatus
+  external_ref: string | null
   note: string | null
   created_at: string
 }
@@ -129,6 +133,8 @@ export type RevenueEventInsert = {
   currency?: string
   short_link_id?: string | null
   post_id?: string | null
+  status?: RevenueEventStatus
+  external_ref?: string | null
   note?: string | null
 }
 export type RevenueEventUpdate = Partial<RevenueEventInsert>

@@ -113,6 +113,7 @@ export function RevenuePage() {
   const { data: events, isLoading } = useRevenueEvents()
   const createEvent = useCreateRevenueEvent()
   const deleteEvent = useDeleteRevenueEvent()
+  const chartEvents = (events ?? []).filter((event) => event.status !== 'reversed')
 
   const [source, setSource] = useState('')
   const [amount, setAmount] = useState('')
@@ -158,7 +159,7 @@ export function RevenuePage() {
             <h2>Revenue by source</h2>
           </div>
         </div>
-        <RevenueChart events={events ?? []} />
+        <RevenueChart events={chartEvents} />
       </section>
 
       <ShortLinksPanel />
@@ -197,7 +198,11 @@ export function RevenuePage() {
                 <b>{dateFormatter.format(new Date(event.occurred_at))}</b>
               </span>
               <div className="queue-title">
-                <strong>{currency.format(Number(event.amount))}</strong>
+                <strong>
+                  {currency.format(Number(event.amount))}
+                  {event.status === 'pending' && ' (pending)'}
+                  {event.status === 'reversed' && ' (reversed)'}
+                </strong>
                 <span>
                   {event.source}
                   {event.note ? ` · ${event.note}` : ''}

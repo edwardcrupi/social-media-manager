@@ -27,7 +27,7 @@ Deno.serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceRoleKey)
   const { data: link, error } = await supabase
     .from('short_links')
-    .select('id, destination_url, utm_source, utm_medium, utm_campaign, utm_content')
+    .select('id, slug, destination_url, utm_source, utm_medium, utm_campaign, utm_content')
     .eq('slug', slug)
     .maybeSingle()
 
@@ -55,6 +55,9 @@ Deno.serve(async (req) => {
   if (link.utm_medium) destination.searchParams.set('utm_medium', link.utm_medium)
   if (link.utm_campaign) destination.searchParams.set('utm_campaign', link.utm_campaign)
   if (link.utm_content) destination.searchParams.set('utm_content', link.utm_content)
+  // Reused as Impact's SubId1 when destination_url is an Impact tracking
+  // link -- harmless extra query param on any other destination.
+  destination.searchParams.set('subId1', link.slug)
 
   return Response.redirect(destination.toString(), 302)
 })
