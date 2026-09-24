@@ -2,7 +2,7 @@
 
 Tracks revenue attributed to social media activity via affiliate/UTM short links, with content-queue management, real Instagram, TikTok, X, and Facebook connections, and fully automated posting: Claude finds trending topics in your niche, drafts a caption, OpenAI/Seedance generates the image or video, and it publishes on schedule to every connected platform with no manual review step.
 
-See [`PLAN.md`](./PLAN.md) for the full build plan and current status.
+See [`PLAN.md`](./PLAN.md) for current status and what's next, and [`NOTES.md`](./NOTES.md) for the per-integration gotchas worth reading before you touch one.
 
 ## Setup
 
@@ -215,7 +215,7 @@ Scopes requested: `tweet.read`, `tweet.write`, `users.read`, `offline.access` (f
 
 X posts reuse the same generated image/Reel content as Instagram/TikTok (see the fan-out note above) -- the caption is truncated to 280 characters if needed. Media upload is X's three-step chunked flow (`/2/media/upload/initialize` -> `/append` -> `/finalize`, polling `?command=STATUS` for video) followed by `POST /2/tweets` with the resulting `media_ids`.
 
-**Confirmed working against a real account** (2026-09-16): OAuth connect and an image publish both verified end-to-end against `@AIUniverseNewsX` -- a real tweet published with media via the chunked upload path, `platform_media_id` populated with the real tweet id. Still unverified: a video post through the same path, and whether `refresh_token` actually rotates on refresh as assumed in `refreshXTokenIfNeeded`. See `PLAN.md`'s Phase 10 section for details.
+**Confirmed working against a real account** (2026-09-16): OAuth connect and an image publish both verified end-to-end against `@AIUniverseNewsX` -- a real tweet published with media via the chunked upload path, `platform_media_id` populated with the real tweet id. Video publishing is proven by nine real published posts, and the token-refresh path is confirmed (X's 2-hour token rotates during a publish run). Auto-generated *image* posts were broken until 2026-09-24 -- not by X, but by `truncateForX` emitting 281 weighted characters. See `NOTES.md`'s Phase 10 section, which is worth reading before debugging anything X-related.
 
 ## Real Instagram insights
 
@@ -231,7 +231,7 @@ It pulls two kinds of metrics:
 - **Account-level**: `reach` via the time-series insights endpoint (`metric_type=time_series`); `profile_views`, `accounts_engaged`, `total_interactions` via the total-value endpoint (`metric_type=total_value`) -- these three 400 under `time_series`, confirmed against the real Graph API.
 - **Per-post** (`reach`, `likes`, `comments`, `saved`, `shares`, plus `views`/`total_interactions` for Reels), via each published post's own `platform_media_id` -- newly stored on the `posts` row by `publish-scheduled-posts` since this phase, so posts published before this change won't have per-post insights available.
 
-**Confirmed working against a real connected account** (2026-09-14) -- deployed, invoked directly, and verified 93 real metric rows landed in `platform_metrics`, with a re-invoke confirming the upsert updates rows in place instead of duplicating. See `PLAN.md`'s Phase 9 section for the three real Graph API/schema bugs this surfaced and how they were fixed (wrong `metric_type` for 3 of 4 account metrics, `plays` renamed to `views`, and a `user_id` default that silently failed under the function's service-role context).
+**Confirmed working against a real connected account** (2026-09-14) -- deployed, invoked directly, and verified 93 real metric rows landed in `platform_metrics`, with a re-invoke confirming the upsert updates rows in place instead of duplicating. See `NOTES.md`'s Phase 9 section for the three real Graph API/schema bugs this surfaced and how they were fixed (wrong `metric_type` for 3 of 4 account metrics, `plays` renamed to `views`, and a `user_id` default that silently failed under the function's service-role context).
 
 ## Offers, tracked links, and the link-in-bio page
 
@@ -264,7 +264,7 @@ Where the link goes differs per platform, and this is not cosmetic:
 
 **On X captions**: Instagram captions run 60-100 words, roughly double what X allows, so X gets its **own caption** rather than a truncated one. Both generation functions ask Claude for an `x_caption` written natively for X, sized to a budget that accounts for whatever will be appended to it (the tracked link counts as 23 characters, plus the disclosure if there is one). The budget is given to the model **in words**, not characters -- asking for a character count produced over-limit captions on every attempt, because models don't count characters reliably; a word target hit it first try. Every other platform keeps the long caption.
 
-Truncation still exists as a safety net in `truncateForX`, for manually-created posts and for anything the budget doesn't cover. It matters that it's correct: X counts *weighted* characters, not string length -- `…` costs 2, as do emoji and most non-Latin characters, and any URL counts as exactly 23 no matter how long it is. A tweet one weighted character over the limit is rejected with `403 You are not permitted to perform this action`, which looks exactly like an app-permissions problem and cost this project a week of misdiagnosis (see PLAN.md Phase 10). The shared rules live in `supabase/functions/_shared/x-text.ts`.
+Truncation still exists as a safety net in `truncateForX`, for manually-created posts and for anything the budget doesn't cover. It matters that it's correct: X counts *weighted* characters, not string length -- `…` costs 2, as do emoji and most non-Latin characters, and any URL counts as exactly 23 no matter how long it is. A tweet one weighted character over the limit is rejected with `403 You are not permitted to perform this action`, which looks exactly like an app-permissions problem and cost this project a week of misdiagnosis (see NOTES.md Phase 10). The shared rules live in `supabase/functions/_shared/x-text.ts`.
 
 **The bio page** turns Instagram's single bio link into one per post. Set a bio page address in Settings (blank turns the page off) and it serves at `/functions/v1/bio/<slug>`, listing recent published posts -- deduplicated across the platform fan-out -- each linking through `redirect`, so clicks log through the existing path with no new tracking code.
 
