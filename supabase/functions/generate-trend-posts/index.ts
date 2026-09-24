@@ -14,6 +14,7 @@
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0'
 import { createClient } from 'npm:@supabase/supabase-js@2.116.0'
 import {
+  campaignSlug,
   captionWithLink,
   fetchActiveOffers,
   fetchPerformanceDigest,
@@ -277,7 +278,7 @@ Deno.serve(async (req) => {
             ...base,
             id: postId,
             social_profile_id: target.id,
-            body: captionWithLink(idea.body, target.platform, linkUrl, settings.x_inline_links_enabled === true),
+            body: captionWithLink(idea.body, target.platform, linkUrl, settings.x_inline_links_enabled === true, offer?.disclosure),
           })
           if (offer && slug) {
             pendingLinks.push({
@@ -288,7 +289,7 @@ Deno.serve(async (req) => {
               affiliate_offer_id: offer.id,
               utm_source: target.platform ?? 'unassigned',
               utm_medium: 'social',
-              utm_campaign: idea.tag || null,
+              utm_campaign: campaignSlug(idea.tag),
             })
           }
         }

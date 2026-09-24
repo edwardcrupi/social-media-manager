@@ -160,6 +160,9 @@ export type AffiliateOfferRow = {
   category: string | null
   priority: number
   active: boolean
+  // Appended to the caption wherever this offer's link appears. Required for
+  // affiliate links; null for destinations you own.
+  disclosure: string | null
   created_at: string
   updated_at: string
 }
@@ -170,6 +173,7 @@ export type AffiliateOfferInsert = {
   category?: string | null
   priority?: number
   active?: boolean
+  disclosure?: string | null
 }
 export type AffiliateOfferUpdate = Partial<AffiliateOfferInsert>
 

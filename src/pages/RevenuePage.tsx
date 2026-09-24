@@ -34,6 +34,7 @@ function OffersPanel() {
   const [programName, setProgramName] = useState('')
   const [destinationUrl, setDestinationUrl] = useState('')
   const [keywords, setKeywords] = useState('')
+  const [disclosure, setDisclosure] = useState('')
 
   // Clicks per offer, aggregated client-side from the short links already
   // loaded for the panel below -- same reasoning as useLinkClickCounts.
@@ -58,12 +59,14 @@ function OffersPanel() {
           .split(',')
           .map((keyword) => keyword.trim())
           .filter(Boolean),
+        disclosure: disclosure.trim() || null,
       },
       {
         onSuccess: () => {
           setProgramName('')
           setDestinationUrl('')
           setKeywords('')
+          setDisclosure('')
         },
       },
     )
@@ -77,7 +80,7 @@ function OffersPanel() {
           <h2>Offers</h2>
           <p className="panel-note">
             Auto-generated posts get a tracked link to whichever of these fits the topic. With no active offer, posts
-            publish with nothing to click.
+            publish with nothing to click. Affiliate links need a disclosure — these posts publish with no review step.
           </p>
         </div>
       </div>
@@ -92,6 +95,11 @@ function OffersPanel() {
           placeholder="Topic keywords (comma-separated)"
           value={keywords}
           onChange={(e) => setKeywords(e.target.value)}
+        />
+        <input
+          placeholder="Disclosure (required for affiliate links)"
+          value={disclosure}
+          onChange={(e) => setDisclosure(e.target.value)}
         />
         <button className="primary-button" type="submit" disabled={createOffer.isPending}>
           {createOffer.isPending ? 'Adding…' : 'Add offer'}
@@ -117,6 +125,7 @@ function OffersPanel() {
               <span>
                 {clicksByOffer[offer.id] ?? 0} click{clicksByOffer[offer.id] === 1 ? '' : 's'} · {offer.destination_url}
                 {offer.keywords.length > 0 ? ` · ${offer.keywords.join(', ')}` : ''}
+                {offer.active && !offer.disclosure ? ' · no disclosure set' : ''}
               </span>
             </div>
             <button

@@ -248,7 +248,9 @@ supabase functions deploy bio --no-verify-jwt
 
 `bio` needs `--no-verify-jwt` for the same reason `redirect` does: real people open it from a bio link with no Supabase session.
 
-**Offers** (Revenue page -> Offers) are what a generated post links to. A row is a program name, a destination URL, and optional topic keywords. The destination can be anything -- an affiliate tracking link, a product page, or your own newsletter signup -- so you don't have to wait on a network approving you to switch this on. With no active offer, posts still generate and publish, just untracked.
+**Offers** (Revenue page -> Offers) are what a generated post links to. A row is a program name, a destination URL, optional topic keywords, and a disclosure.
+
+**Set the disclosure on any affiliate offer.** These posts publish unattended with no review step, so an affiliate link without one puts an undisclosed paid endorsement on a public account automatically -- which both the FTC's endorsement guides and Amazon's Associates Operating Agreement prohibit. The disclosure is appended with the link wherever the link appears, and the Offers list flags any active offer that doesn't have one. An offer pointing at something you own (a newsletter, your own landing page) isn't an endorsement and doesn't need one. The destination can be anything -- an affiliate tracking link, a product page, or your own newsletter signup -- so you don't have to wait on a network approving you to switch this on. With no active offer, posts still generate and publish, just untracked.
 
 How a post gets its link:
 - Claude picks the offer **inside the generation call it already makes** (the offer list goes into the prompt, and it returns an `offer_id`), so there's no second API call and no keyword matcher to maintain.

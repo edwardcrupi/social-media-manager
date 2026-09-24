@@ -44,7 +44,7 @@ library — this was a deliberate choice, not an oversight.
 | 9 | Real Instagram insights (reach/engagement data) | ✅ Done — confirmed against live data |
 | 10 | X (Twitter) integration + multi-platform auto-post fan-out | ✅ **Fixed 2026-09-24** — the cause was never X, it was our own `truncateForX`. See "Root cause found 2026-09-24" |
 | 11 | Facebook Page integration (OAuth + posting) | ✅ Confirmed live 2026-09-23 — connected since 09-17, 30 posts published (20 image, 10 video) |
-| 12 | Monetization: connect the content pipeline to the revenue machinery | 🟡 Steps 1-3 built + deployed (2026-09-24). Not yet earning: needs one `affiliate_offers` row and a real generation run to verify. Steps 4-6 not started |
+| 12 | Monetization: connect the content pipeline to the revenue machinery | ✅ Steps 1-3 built, deployed and **verified against live data 2026-09-24**. One caveat: the bio page's HTML can't be served from supabase.co (JSON works). Steps 4-6 not started |
 
 **Phases 1-9 have been built, deployed, and confirmed working against real accounts** — a real post has published to Instagram, a real AI-generated Reel has been generated, downloaded, and manually reviewed for quality, a real video has published to TikTok via the Content Posting API, and real reach/engagement data has been synced from the Instagram Graph API into `platform_metrics`. Phase 8's Production app is submitted for TikTok's App Review (needed for public, not just private-account, posting) — see its section below for the Developer Portal setup corrections and API gotchas this took to get working, several of which aren't documented anywhere obvious on TikTok's side. See the per-phase sections below for exact implementation details, file names, and the mistakes/corrections that got each one working.
 
@@ -412,9 +412,28 @@ Second constraint to design around: **Instagram and X are the live channels; Tik
 
 This matters for Step 1's link placement: **X and Facebook are the only platforms with clickable captions**, and of those, X is the only one currently publishing. So X is where inline tracked links actually reach anyone — which makes the **$0.20-per-post-with-a-URL vs $0.015-without** billing tier a live cost decision on the working half of the X pipeline, not a hypothetical.
 
-### What was built and deployed 2026-09-24
+### Verified end-to-end 2026-09-24
 
-Migrations are applied to the live project and all four functions are deployed. **What is *not* done is verification**: apart from the bio page's default-off behavior, nothing below has been observed working, because every remaining check needs a real generation run. Treat the rest as code that compiles and deployed cleanly, not as proven behavior.
+Two real `generate-trend-posts` runs against the live project, with the first live offer (Amazon Associates → `https://amzn.to/4xn6snt`, the link that had been sitting manually pasted in the Instagram bio since Phase 3). Observed, not inferred:
+
+- `created: 3, linksCreated: 3` — one short link per post row. Three rows because three image-capable platforms are connected; TikTok is correctly excluded from image posts.
+- **Caption placement is right per platform**: Instagram and X captions carry no URL, the Facebook caption carries the URL *and* the disclosure. X inline links stayed off, as configured.
+- One generated image shared across all three rows; a distinct slug per row.
+- `redirect/<slug>` → `302` to `https://amzn.to/4xn6snt?utm_source=facebook&utm_medium=social&utm_campaign=ai-gadgets&subId1=<slug>`. **`utm_source` differs per platform row, so per-platform attribution works.**
+- A `link_clicks` row landed against the right `affiliate_offer_id`.
+- `performanceDigest: "included"` after the gate fix below.
+
+**Five real problems this surfaced that code review had not:**
+
+1. **The deployed `redirect` was stale.** It predated the commit that added `subId1`, so the live `Location` header had no `subId1` at all — the repo was right and production was months behind. Redeployed. Same class of drift as migration 0005: *being in the repo is not evidence of being deployed.*
+2. **The digest gate was decided by an arbitrary fetch window.** It fetched the 60 most recent published rows and filtered `reach > 0` in JS. Against real data: 136 published rows, only **19** with metrics in the newest 60 — so the digest was suppressed at 19/20 while **51** qualifying posts existed. The cause is the fan-out: three of every four rows are X/Facebook/TikTok, which have no insights sync and can never have reach, so "recent rows" is a terrible proxy for "rows with data". Fixed by filtering `reach > 0` in SQL and dropping the window entirely.
+3. **The model wrote link-aware copy for platforms with no link.** The first run's captions ended `"Meanwhile, the AI gear that already works is here →"` — fine on Facebook, pointing at nothing on Instagram and X. Fixed with an explicit prompt constraint that the caption must read naturally with no link in it, since the URL is only appended on some platforms. Verified gone on the second run.
+4. **An undisclosed affiliate link would have auto-published.** Posts go out unattended, so every Facebook caption would have carried an Amazon affiliate link with no disclosure — violating both the FTC endorsement guides and Amazon's Associates agreement. Added `affiliate_offers.disclosure` (migration `0017`), appended with the link wherever it appears, surfaced in the Offers UI, and flagged there when an active offer has none.
+5. **`utm_campaign` was raw hashtag text.** The post's `tag` went in verbatim, so campaigns arrived as `%23MetaCharm+%23AIgadgets+%23MetaConnect`. Now normalized to `ai-gadgets` via `campaignSlug()`.
+
+**The digest is technically on but currently worthless, and this is worth watching.** The 20 rows now feeding the prompt have a median reach of **1**, 16 of 20 have reach ≤ 2, and **total clicks across all of them is 0**. The gate counts posts with metrics, not whether those metrics carry information — so the model is being told to "bias toward the top quartile by clicks-per-reach" across twenty posts that all have zero clicks. That can only teach noise, which is exactly what the gate was meant to prevent. **Recommended: add a minimum-reach floor (or require non-zero total clicks) before this is trusted to steer generation.** One-line change in `fetchPerformanceDigest`; left as a decision rather than made unilaterally, since the right threshold depends on when the account is expected to grow.
+
+### What was built and deployed 2026-09-24
 
 - Migrations `0013_affiliate_offers.sql` (offers table, `short_links.affiliate_offer_id`, a partial index on `short_links.post_id`, `automation_settings.x_inline_links_enabled`), `0014_bio_page.sql` (bio config on `automation_settings`), `0016_post_performance.sql` (the `post_performance` view). **All applied** via `supabase db push`.
 - Functions deployed: `generate-trend-posts`, `generate-reel-posts`, `publish-scheduled-posts`, and `bio` (with `--no-verify-jwt`). The CLI uploads `_shared/monetization.ts` alongside each function that imports it — confirmed in the deploy output, so the shared-module pattern does work with `supabase functions deploy`.
@@ -522,16 +541,16 @@ The schema is **already multi-tenant**: every table is `user_id`-scoped with RLS
 
 ### Verification additions for this phase
 
-**Only the bio-page default-off check has been done.** Everything else needs a real `generate-trend-posts` run, which costs real Claude + OpenAI spend and produces posts that auto-publish with no review step — so it's a deliberate, attended action, not something to fire off casually.
+**Most of these are now done — see "Verified end-to-end 2026-09-24" above.** Still outstanding: the multi-offer selection and hallucinated-`offer_id` fallback (needs a second offer), X inline links in the on state, the X over-length-with-link truncation case, and the zero-offer path. Everything else needs a real `generate-trend-posts` run, which costs real Claude + OpenAI spend and produces posts that auto-publish with no review step — so it's a deliberate, attended action, not something to fire off casually.
 
-- `affiliate_offers`: insert two offers, run `generate-trend-posts`, confirm every created post row has a matching `short_links` row and that a hallucinated/absent `offer_id` falls back to the priority offer rather than producing a link-less post.
+- `affiliate_offers`: insert two offers, run `generate-trend-posts`, confirm every created post row has a matching `short_links` row and that a hallucinated/absent `offer_id` falls back to the priority offer rather than producing a link-less post. ✅ Done 2026-09-24 with one offer — `created: 3, linksCreated: 3` on both runs. The multi-offer selection and the hallucinated-id fallback are still unexercised: with a single active offer every path returns the same row.
 - Zero-offer path: with no active offers, run `generate-trend-posts` and confirm posts are still created (untracked, `linksCreated: 0`) rather than the run failing.
-- Caption placement: confirm an Instagram row's `body` has **no** URL, a Facebook row's does, and an X row's does **not** until `x_inline_links_enabled` is turned on — then does.
+- Caption placement: confirm an Instagram row's `body` has **no** URL, a Facebook row's does, and an X row's does **not** until `x_inline_links_enabled` is turned on — then does. ✅ Done 2026-09-24 for the off state; the on state for X is still untested.
 - X truncation: publish an X post whose caption plus link exceeds 280 chars and confirm the tweet ends with a complete, clickable short URL rather than a severed one.
 - Bio page off by default: hit `/functions/v1/bio/<anything>` with no `bio_slug` set anywhere and confirm a 404, not an empty page. ✅ Done 2026-09-24 — 404 on both `/bio` and `/bio/<unknown-slug>`.
-- Per-platform attribution: with two platforms connected, confirm one idea produces distinct slugs per platform row, and that clicking each logs a `link_clicks` row against the right one.
+- Per-platform attribution: with two platforms connected, confirm one idea produces distinct slugs per platform row, and that clicking each logs a `link_clicks` row against the right one. ✅ Done 2026-09-24 — three distinct slugs, `utm_source` per platform, click logged against the right offer.
 - Bio page: load it unauthenticated, confirm it renders published posts only (no drafts/failed), and that each link 302s through `redirect` with `subId1` appended. 🟡 Partially done 2026-09-24 — content verified via `?format=json` (24 posts, published-only, deduplicated); the HTML rendering is blocked by the gateway (see above), and no post has a link yet because no offer exists.
-- Feedback loop: with fewer than the minimum posts, confirm the digest block is omitted from the prompt entirely rather than sent empty or partial.
+- Feedback loop: with fewer than the minimum posts, confirm the digest block is omitted from the prompt entirely rather than sent empty or partial. ✅ Both branches observed 2026-09-24 — omitted at 19 qualifying rows, `performanceDigest: "included"` at 20+ after the gate fix.
 - Newsletter: confirm double opt-in (an unconfirmed subscriber never receives a send) and that `unsubscribed_at` is honored.
 
 ---

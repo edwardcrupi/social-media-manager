@@ -18,6 +18,10 @@ export interface AffiliateOffer {
   keywords: string[]
   category: string | null
   priority: number
+  // Appended wherever this offer's link appears in a caption. Required for
+  // affiliate links (FTC endorsement guides, and Amazon's Associates
+  // agreement mandates specific wording); null for your own destinations.
+  disclosure: string | null
 }
 
 // Below this many published posts with real metrics, the performance digest
@@ -25,17 +29,11 @@ export interface AffiliateOffer {
 // data would just teach the model noise, confidently.
 const MIN_POSTS_FOR_DIGEST = 20
 const DIGEST_POST_LIMIT = 20
-// Fetched wider than the digest itself on purpose: the most recent posts are
-// the ones whose insights haven't synced yet, and fetching exactly
-// DIGEST_POST_LIMIT rows before filtering those out would make the gate
-// "the last 20 published posts ALL have metrics" rather than "there are 20
-// posts with metrics" -- which in practice would almost never be true.
-const DIGEST_FETCH_LIMIT = 60
 
 export async function fetchActiveOffers(supabase: any, userId: string): Promise<AffiliateOffer[]> {
   const { data, error } = await supabase
     .from('affiliate_offers')
-    .select('id, program_name, destination_url, keywords, category, priority')
+    .select('id, program_name, destination_url, keywords, category, priority, disclosure')
     .eq('user_id', userId)
     .eq('active', true)
     .order('priority', { ascending: false })
@@ -60,6 +58,11 @@ export function offerPromptLines(offers: AffiliateOffer[]): string[] {
   return [
     '',
     'Each post also carries a tracked link to one of the offers below. Pick the offer that fits the post most naturally and return its id as "offer_id". If none fits well, still pick the closest one -- every post must carry a link.',
+    // The same caption is published to every connected platform, but the URL
+    // is only appended on the ones with clickable captions. A caption ending
+    // in "here ->" therefore points at nothing on Instagram and X. Observed
+    // on the first real run of this feature, not hypothetical.
+    'The caption text itself must read completely naturally with NO link in it, because the link is only appended on some platforms -- Instagram and TikTok captions are not clickable and will never show it. Never write "link below", "link in caption", "tap here", "here ->", or any phrasing that assumes the reader can see a URL. Do not append the URL yourself; that is handled automatically.',
     list,
     '',
   ]
@@ -75,6 +78,21 @@ export function resolveOffer(offers: AffiliateOffer[], offerId: unknown): Affili
     if (match) return match
   }
   return offers[0] // fetchActiveOffers orders by priority desc
+}
+
+// The post's tag is used as utm_campaign, and tags come back as hashtag
+// strings ("#MetaCharm #AIgadgets"), which land in analytics URL-encoded and
+// unreadable. Normalized to a plain campaign token instead.
+export function campaignSlug(tag: string | null | undefined): string | null {
+  if (!tag) return null
+  const cleaned = tag
+    .toLowerCase()
+    .replace(/#/g, ' ')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+    .replace(/-+$/g, '')
+  return cleaned || null
 }
 
 export function newSlug(): string {
@@ -97,10 +115,14 @@ export function captionWithLink(
   platform: string | null | undefined,
   url: string | null,
   xInlineLinksEnabled: boolean,
+  disclosure?: string | null,
 ): string {
   if (!url) return body
   if (platform === 'facebook' || (platform === 'x' && xInlineLinksEnabled)) {
-    return `${body}\n\n${url}`
+    // The disclosure travels with the link: it belongs in the caption where
+    // the link actually appears, not somewhere a reader has to go looking.
+    const tail = disclosure ? `${disclosure}\n${url}` : url
+    return `${body}\n\n${tail}`
   }
   return body
 }
@@ -147,23 +169,30 @@ export async function insertShortLinks(
 // Returns null (rather than an empty or partial block) when there isn't
 // enough real data yet -- see MIN_POSTS_FOR_DIGEST.
 export async function fetchPerformanceDigest(supabase: any, userId: string): Promise<string | null> {
+  // `reach > 0` is filtered in SQL, not in JS after the fact. Filtering a
+  // fixed window client-side made the gate depend on an arbitrary fetch size:
+  // measured against real data, 136 published rows contained only 19 with
+  // metrics in the newest 60, so the digest was suppressed at 19/20 while 51
+  // qualifying posts existed. The fan-out is why -- three of every four rows
+  // are X/Facebook/TikTok, which have no insights sync and can never have
+  // reach, so "recent rows" is a poor proxy for "rows with data".
+  //
+  // "Posts with metrics" is the real bar, not "posts published": a post whose
+  // insights haven't synced reads as a zero-reach failure and would teach
+  // exactly the wrong lesson.
   const { data, error } = await supabase
     .from('post_performance')
     .select('title, tag, platform, media_type, reach, clicks, revenue, published_at')
     .eq('user_id', userId)
     .eq('status', 'published')
     .not('published_at', 'is', null)
+    .gt('reach', 0)
     .order('published_at', { ascending: false })
-    .limit(DIGEST_FETCH_LIMIT)
+    .limit(DIGEST_POST_LIMIT)
   if (error || !data) return null
+  if (data.length < MIN_POSTS_FOR_DIGEST) return null
 
-  // "Posts with metrics" is the real bar, not "posts published" -- a post
-  // whose insights haven't synced yet reads as a zero-reach failure and
-  // would teach exactly the wrong lesson.
-  const withMetrics = data.filter((row: any) => Number(row.reach) > 0)
-  if (withMetrics.length < MIN_POSTS_FOR_DIGEST) return null
-
-  const lines = withMetrics.slice(0, DIGEST_POST_LIMIT).map((row: any) => {
+  const lines = data.map((row: any) => {
     const reach = Number(row.reach)
     const clicks = Number(row.clicks)
     const revenue = Number(row.revenue)

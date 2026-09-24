@@ -1,0 +1,14 @@
+-- Affiliate disclosure text, carried with the offer rather than bolted onto
+-- the caption prompt.
+--
+-- Posts publish unattended with no review step, so an offer whose link is an
+-- affiliate link would otherwise put an undisclosed affiliate link into every
+-- Facebook caption automatically. Both the FTC's endorsement guides and
+-- Amazon's Associates Operating Agreement require disclosure at the point the
+-- link appears, and "the automation did it" is not a defense.
+--
+-- Nullable: an offer pointing at your own newsletter or landing page isn't an
+-- endorsement for compensation and needs no disclosure. The text lives per
+-- offer because the required wording differs by program -- Amazon mandates
+-- specific language, most others don't.
+alter table affiliate_offers add column disclosure text;
