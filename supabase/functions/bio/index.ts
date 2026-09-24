@@ -12,6 +12,18 @@
 // automation_settings. No slug set means no page (404), so the page is off
 // by default rather than exposing a user's post history the moment this
 // function is deployed.
+//
+// **The HTML below cannot be used on the default *.supabase.co domain.**
+// Verified 2026-09-24 against the deployed function: Supabase's gateway
+// rewrites a text/html response from an Edge Function to `text/plain` and
+// attaches `content-security-policy: default-src 'none'; sandbox`, so a
+// browser shows the markup as source instead of rendering it. This is an
+// anti-phishing measure on the shared domain, not something a header here
+// can opt out of -- `redirect` is unaffected because a 302 isn't HTML.
+// Serving the real page needs either a Supabase custom domain or a
+// separately-hosted front end. Until then, `?format=json` (or an
+// `Accept: application/json` request) returns the same content as data, so
+// any front end can render it; see PLAN.md Phase 12 Step 2.
 import { createClient } from 'npm:@supabase/supabase-js@2.116.0'
 
 const MAX_POSTS = 24
@@ -179,6 +191,32 @@ Deno.serve(async (req) => {
       href: linkSlug ? `${supabaseUrl}/functions/v1/redirect/${linkSlug}` : null,
     }
   })
+
+  // JSON is the usable output today (see the header comment): it's what a
+  // separately-hosted front end renders, and it's how this function's
+  // behavior is verifiable at all while the gateway mangles the HTML.
+  const wantsJson =
+    url.searchParams.get('format') === 'json' ||
+    (req.headers.get('accept') ?? '').includes('application/json')
+
+  if (wantsJson) {
+    return new Response(
+      JSON.stringify({
+        headline: settings.bio_headline ?? settings.bio_handle ?? 'Latest posts',
+        subhead: settings.bio_subhead ?? null,
+        handle: settings.bio_handle ?? null,
+        avatar_url: settings.bio_avatar_url ?? null,
+        posts: entries.map((entry) => ({
+          title: entry.title,
+          body: entry.body,
+          media_url: entry.mediaUrl,
+          media_type: entry.mediaType,
+          href: entry.href,
+        })),
+      }),
+      { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=300' } },
+    )
+  }
 
   return new Response(renderPage(settings, entries), {
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=300' },

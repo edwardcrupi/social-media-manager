@@ -260,7 +260,11 @@ Where the link goes differs per platform, and this is not cosmetic:
 - **Facebook**: clickable and free -- the URL is appended to the caption.
 - **X**: clickable, but X bills **$0.20 per post containing a URL vs $0.015 without** (13x), so inline X links are **off by default**. Turn them on in Settings once there's conversion data to justify the cost.
 
+**On X captions**: X counts *weighted* characters, not string length -- `…` costs 2, as do emoji and most non-Latin characters, and any URL counts as exactly 23 no matter how long it is. `truncateForX` accounts for all three. Getting this wrong is not a cosmetic bug: a tweet one weighted character over the limit is rejected with `403 You are not permitted to perform this action`, which looks exactly like an app-permissions problem and cost this project a week of misdiagnosis (see PLAN.md Phase 10).
+
 **The bio page** turns Instagram's single bio link into one per post. Set a bio page address in Settings (blank turns the page off) and it serves at `/functions/v1/bio/<slug>`, listing recent published posts -- deduplicated across the platform fan-out -- each linking through `redirect`, so clicks log through the existing path with no new tracking code.
+
+> **The HTML page does not work on the default `*.supabase.co` domain.** Supabase's gateway rewrites an Edge Function's `text/html` response to `text/plain` with a sandboxing CSP, so a browser shows the source rather than the page -- an anti-phishing measure on the shared domain (`redirect` is unaffected, since a 302 isn't HTML). Until there's a Supabase custom domain or a publicly-hosted front end, use `/functions/v1/bio/<slug>?format=json`, which returns the same content as data for any front end to render.
 
 **The feedback loop**: both generation functions now include a digest of how recent posts actually performed (reach, clicks, clicks-as-a-percentage-of-reach, revenue -- from the new `post_performance` view over `posts` + `platform_metrics` + `link_clicks` + `revenue_events`) and are told to bias toward the top quartile. It's gated behind **20 published posts with real synced metrics** and omitted entirely below that, rather than sent thin -- under-powered data just teaches the model noise.
 

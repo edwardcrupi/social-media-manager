@@ -42,7 +42,7 @@ library — this was a deliberate choice, not an oversight.
 | 7 | Impact.com live revenue reconciliation | ⛔ Dead — publisher account not approved (2026-09-23). Code built, unusable |
 | 8 | TikTok integration (OAuth + posting) | ✅ Confirmed via Sandbox; Production pending TikTok App Review |
 | 9 | Real Instagram insights (reach/engagement data) | ✅ Done — confirmed against live data |
-| 10 | X (Twitter) integration + multi-platform auto-post fan-out | ⚠️ Partially working — video publishes (7 live), images almost never do; see "Corrected 2026-09-23" |
+| 10 | X (Twitter) integration + multi-platform auto-post fan-out | ✅ **Fixed 2026-09-24** — the cause was never X, it was our own `truncateForX`. See "Root cause found 2026-09-24" |
 | 11 | Facebook Page integration (OAuth + posting) | ✅ Confirmed live 2026-09-23 — connected since 09-17, 30 posts published (20 image, 10 video) |
 | 12 | Monetization: connect the content pipeline to the revenue machinery | 🟡 Steps 1-3 built + deployed (2026-09-24). Not yet earning: needs one `affiliate_offers` row and a real generation run to verify. Steps 4-6 not started |
 
@@ -60,7 +60,7 @@ library — this was a deliberate choice, not an oversight.
 0b. ~~**Deploy `impact-conversion-postback`**~~ — **retracted 2026-09-23. Do not deploy it.** It is correctly absent from the 14 ACTIVE functions, because **the Impact publisher account was not approved**, so there is no program, no tracking link, and nothing that will ever call this endpoint. Deploying it would expose a public endpoint serving no purpose. See Phase 7 below for what this invalidates and what survives.
 
 1. ~~**Facebook integration** (Phase 11)~~ — **done, confirmed 2026-09-23**: connected since 09-17 with 30 posts published (20 image, 10 video), all with real Page post ids. Only a visual check of the Page itself remains. Original note follows for reference: **Facebook integration** (Phase 11) — built (migration, OAuth pair, publish path, fan-out) but **not yet run against a real account**: needs the Meta app's redirect URI + `FACEBOOK_REDIRECT_URI` secret set, both functions deployed, and a real "Connect Facebook" click followed by a real scheduled post to confirm the Page-feed publish path actually works. See Phase 11 section and README's "Connecting Facebook".
-2. **X integration** (Phase 10) — **one untried lever left, see "Most likely root cause" in the Phase 10 section: the App may not be enrolled in the Pay-Per-Use *package* (a separate portal state from the account having credits, which is what was actually confirmed).** Prior note, still true of every *code*-side fix: not actionable from this codebase. OAuth connect and an image publish were confirmed working 2026-09-16, but publishing has since regressed to a `tweet create (HTTP 403): You are not permitted to perform this action.` on every attempt, and every app-side fix (reconnect for a fresh token, regenerate the OAuth Client ID/Secret and reconnect again, confirm the Pay-Per-Use Project is funded) has been tried with identical results — see Phase 10 section's "Regression discovered 2026-09-17" writeup. This matches reports of an X platform-side issue, not a config problem here. Don't re-attempt those fixes without new information from X; check back once there's a response on the linked devcommunity.x.com threads or from X support. Video publish and the fan-out behavior remain unverified on top of this.
+2. ~~**X integration** (Phase 10)~~ — **DONE, fixed and verified 2026-09-24.** Every theory below (package enrollment, credits, an account restriction, an X platform-side bug) was **wrong**. The cause was a one-character bug in this repo: `truncateForX` produced exactly 280 *JavaScript* characters ending in `…`, and X weighs `…` as 2, so every truncated tweet was 281 weighted characters — one over — which X rejects with a generic `403 You are not permitted to perform this action` that reads exactly like a permissions problem. Two real auto-generated image posts published within minutes of the fix. **Do not open a devcommunity thread. Do not touch the Developer Portal.** Full writeup in "Root cause found 2026-09-24" in the Phase 10 section.
 3. **TikTok integration** (Phase 8) — fully confirmed end-to-end via Sandbox (real publish, real `platformMediaId` returned). Waiting on TikTok's App Review response for the Production app before public (non-`SELF_ONLY`) posting is possible -- check review status and, once approved, set `TIKTOK_PRIVACY_LEVEL=PUBLIC_TO_EVERYONE` and switch `TIKTOK_CLIENT_KEY`/`TIKTOK_CLIENT_SECRET` from the Sandbox credentials to Production's.
 4. ~~**Impact.com reconciliation** (Phase 7)~~ — **dead as of 2026-09-23: the Impact publisher account was not approved.** Nothing here is confirmable, because there will be no postback. Don't spend further time on `mapStatus()` or the postback function. A replacement affiliate network is now a **prerequisite for Phase 12 Step 1** — see that step's revised "Where the offers come from."
 
@@ -308,6 +308,45 @@ Two further corrections this forces:
 
 **Next step to actually diagnose it**: let exactly one auto-generated *image* post through to X and capture the raw error. The stage-tagging (`media init:`/`media append:`/`media finalize:`/`tweet create:`) is still in the deployed code, so a single real attempt will say whether images even fail at tweet-create — which is currently an assumption inherited from the overwritten reasons, not an observation. Until that exists, the enrollment theory below is unconfirmed: it predicts a uniform failure, and the data shows a media-type-dependent one.
 
+### Root cause found and fixed 2026-09-24 — it was our code, not X
+
+**Everything above this heading is wrong about the cause.** Kept, unedited, because the way it went wrong is the lesson.
+
+`truncateForX` did `text.slice(0, 279) + '…'` — exactly 280 JavaScript characters, which looks right and isn't. **X counts *weighted* length**, and `…` (U+2026) falls outside every weight-1 range in X's twitter-text configuration, so it costs **2**. Every truncated tweet was therefore **281 weighted characters — over by exactly one**, and X rejects it with:
+
+```
+403 {"detail":"You are not permitted to perform this action.","status":403,"title":"Forbidden","type":"about:blank"}
+```
+
+No `reason`, no `client-not-enrolled`, no mention of length. That sentence is the same one X returns for an unenrolled app and for a restricted account, which is what sent this chasing the Developer Portal for a week.
+
+**The evidence was in the database the whole time.** Every X post that ever published had a caption under 280 characters; every post that failed had a 419-502 character auto-generated caption:
+
+| | caption length | result |
+|---|---|---|
+| Videos (9 published) | 224-257 | ✅ always published |
+| The one manual image test (2026-09-16) | short | ✅ published |
+| Auto-generated image posts | 419-502 | ❌ never once published |
+
+It was never image-vs-video. **It was truncated-vs-not** — videos just happen to get short captions and image posts get 60-100 word ones. And there was never a "regression on 2026-09-17" either: auto-generated image posts had never worked at any point. The 2026-09-16 success that made it look like a regression was the short manual test.
+
+**What misled the diagnosis, worth naming so it doesn't happen again:**
+- The 403's wording invites a permissions hypothesis and gives no evidence for or against one, so every theory built on it was unfalsifiable from the error alone.
+- `publishToX` threw away the response body and kept only `detail`, so the (empty) `reason` field — the one thing that would have ruled enrollment out on day one — was never visible.
+- The 29 bulk-overwritten `failure_reason` values destroyed the real per-post errors, leaving only 4 genuine ones, all captured after 0012 landed.
+- **The decisive check was cheap and available all along**: two videos published at 10:15 and 10:17 on 2026-09-23, *between* image failures at 09:00 and 21:00 the same day. An app that can't create tweets can't create those. One query would have falsified the enrollment theory at any point that week.
+
+**The fix** (in `publish-scheduled-posts`): `truncateForX` now measures X's weighted length via `xCharWeight`/`xWeightedLength`, budgets 23 for a URL (t.co's fixed cost) plus 2 for the ellipsis, iterates code points so an emoji is never split into a lone surrogate, and backs off to a word boundary. `publishToX` also now logs the full 403 body rather than just `detail`.
+
+**Verified live 2026-09-24**, in this order:
+1. Same image, same account, same token, short caption → published (tweet `2102977951834992815`). Isolates the caption as the variable.
+2. Fix deployed, then a real 493-character auto-generated caption → published (tweet `2102978396825522373`). **The first auto-generated image post ever to publish to X.**
+3. Token refresh confirmed working as a side effect: X's access token expires every 2 hours, and the publish run rotated it (`expires_at` moved to 06:24 UTC). Publishes spread across 09-16 → 09-24 were only ever possible through that path, so it has been working all along.
+
+**Still true and still worth knowing**: X bills $0.20 per post containing a URL vs $0.015 without, so Phase 12's inline X links stay off by default.
+
+**One follow-up worth considering**: truncating a 60-100 word caption to 280 characters produces a mid-sentence cut-off post, which is legal but not good. The better fix is asking Claude for a short X-native caption alongside the long one at generation time, rather than amputating the long one at publish time.
+
 ### Possible root cause for the failures that do occur (identified 2026-09-23, not yet tried)
 
 The "ruled out" reasoning above contains a specific mistake worth naming, because it's what stalled this for a week: **"the account has credits" and "this App is enrolled in the Pay-Per-Use package" are two different portal states, and only the first was ever confirmed.** The note above reasoned that since X's billing docs describe credits as account-wide rather than per-Project, a Project/billing-linkage theory "doesn't apply" — but account-wide credit is exactly what makes per-App enrollment a *separate* thing that can silently be missing. Funded account, unenrolled App, 403 on the only billed call. That shape fits every symptom observed here:
@@ -432,6 +471,17 @@ Instagram gives one bio link; this turns it into N. New public Edge Function `su
 
 Page config (headline, avatar, handle) fits as columns on `automation_settings` rather than a new table — it's one row per user already. Pure conversion-rate gain on traffic that already exists; no new audience required.
 
+**BLOCKED 2026-09-24: the HTML cannot be served from the default Supabase domain.** Verified against the deployed function — Supabase's gateway rewrites an Edge Function's `text/html` response to `text/plain` and attaches `content-security-policy: default-src 'none'; sandbox`, so a browser shows the markup as source instead of rendering it. It's an anti-phishing measure on the shared `*.supabase.co` domain, not something a response header can opt out of. (`redirect` is unaffected: a 302 isn't HTML. This is also why the plan's original "serve a page from an Edge Function" design passed review — the existing public function never had to return markup.)
+
+Everything *behind* the page is verified working: `?format=json` on the same endpoint returns the real content, and against live data it returned 24 cards, **zero duplicate titles** (the fan-out dedup works), published posts only, correct HTML escaping, and the handle rendered. Only the last hop — HTML reaching a browser — is blocked.
+
+**Three ways forward, cheapest first:**
+1. **Host the front end publicly** (Vercel/Netlify free tier) and add a public `/bio/:slug` route that renders the JSON this function already returns. The app currently runs only on localhost, so this is the missing piece anyway — an Instagram bio link needs a public URL regardless.
+2. **Supabase custom domain** (paid add-on). Then the existing HTML path works untouched.
+3. Any static host (GitHub Pages) fetching the same JSON.
+
+The JSON endpoint is deliberately shaped so none of these require changing this function again.
+
 **As built:** served at `/functions/v1/bio/<bio_slug>`, where `bio_slug` is unique and **null means the page is off** — so deploying the function doesn't expose anyone's post history until they deliberately set an address. Posts are **deduplicated by title** before rendering, because the platform fan-out means one idea is several published rows and a bio page listing the same post four times is worse than useless. A trailing URL is stripped from the caption preview (it's already in the caption on X/Facebook, and the whole card is the link here). The page is self-contained — no external CSS, fonts, or scripts — so it can't break on a CDN and loads fast on mobile, which is the only way anyone will open it. `noindex`, 5-minute cache. Posts predating this phase (or created while no offers existed) have no link and render as non-clickable cards rather than being hidden.
 
 ### Step 3 — Feed performance back into generation (built, not deployed)
@@ -480,7 +530,7 @@ The schema is **already multi-tenant**: every table is `user_id`-scoped with RLS
 - X truncation: publish an X post whose caption plus link exceeds 280 chars and confirm the tweet ends with a complete, clickable short URL rather than a severed one.
 - Bio page off by default: hit `/functions/v1/bio/<anything>` with no `bio_slug` set anywhere and confirm a 404, not an empty page. ✅ Done 2026-09-24 — 404 on both `/bio` and `/bio/<unknown-slug>`.
 - Per-platform attribution: with two platforms connected, confirm one idea produces distinct slugs per platform row, and that clicking each logs a `link_clicks` row against the right one.
-- Bio page: load it unauthenticated, confirm it renders published posts only (no drafts/failed), and that each link 302s through `redirect` with `subId1` appended.
+- Bio page: load it unauthenticated, confirm it renders published posts only (no drafts/failed), and that each link 302s through `redirect` with `subId1` appended. 🟡 Partially done 2026-09-24 — content verified via `?format=json` (24 posts, published-only, deduplicated); the HTML rendering is blocked by the gateway (see above), and no post has a link yet because no offer exists.
 - Feedback loop: with fewer than the minimum posts, confirm the digest block is omitted from the prompt entirely rather than sent empty or partial.
 - Newsletter: confirm double opt-in (an unconfirmed subscriber never receives a send) and that `unsubscribed_at` is honored.
 
@@ -501,7 +551,8 @@ The schema is **already multi-tenant**: every table is `user_id`-scoped with RLS
 - Instagram insights: deploy and invoke `sync-instagram-insights` manually against a connected account with a post older than 24h; confirm `platform_metrics` rows appear for both account-level and post-level metrics, and re-invoking the same day updates rows in place rather than duplicating (check row counts before/after). ✅ Done 2026-09-14 — 93 rows, idempotent on re-invoke, running hourly via cron.
 - X connect: click "Connect X" on Profiles, approve, confirm a `social_profiles` row appears with `platform: x` and a `social_profile_secrets` row with both `access_token` and `refresh_token` set. ✅ Done 2026-09-16 — connected `@AIUniverseNewsX`.
 - X publish (image): schedule an image post against the connected X profile, run `publish-scheduled-posts`, confirm it flips to `published` with a real tweet id in `platform_media_id`. ✅ Done 2026-09-16 — real tweet published via the chunked media upload + `/2/tweets` path.
-- X publish (video) + token refresh: same as above for a video post; manually force `expires_at` into the past on the secret row and re-run to confirm the token-refresh path works and check whether `refresh_token` actually rotates. **Not yet done.**
+- X publish (video) + token refresh: same as above for a video post; manually force `expires_at` into the past on the secret row and re-run to confirm the token-refresh path works and check whether `refresh_token` actually rotates. ✅ Done — video publishing proven by 9 real published posts, and the refresh path confirmed 2026-09-24 (X's 2-hour token was rotated during a live publish run, `expires_at` moving forward). Forcing `expires_at` manually was never needed: publishes spread across 09-16 → 09-24 are only possible through that path.
+- X publish (auto-generated image): ✅ Done 2026-09-24 — a real 493-character auto-generated caption published (tweet `2102978396825522373`) after the `truncateForX` weighted-length fix. This had never worked before that fix.
 - Facebook connect: click "Connect Facebook" on Profiles, approve, confirm a `social_profiles` row appears with `platform: facebook` and a `social_profile_secrets` row with an `access_token` set. **Not yet done.**
 - Facebook publish (image + video): schedule an image post and a video post against the connected Facebook profile, run `publish-scheduled-posts`, confirm both flip to `published` with a real post id in `platform_media_id`, and check the Page itself to confirm they actually appear there. **Not yet done.**
 - Multi-platform fan-out: with two or more eligible platforms connected, run `generate-trend-posts`/`generate-reel-posts` and confirm one post row is created per connected eligible profile from a single idea (same `title`/`media_url`, different `social_profile_id`), and that the Content Queue shows a distinct platform label per row rather than what looks like duplicates. **Not yet done.**
