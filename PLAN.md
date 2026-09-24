@@ -345,7 +345,17 @@ It was never image-vs-video. **It was truncated-vs-not** — videos just happen 
 
 **Still true and still worth knowing**: X bills $0.20 per post containing a URL vs $0.015 without, so Phase 12's inline X links stay off by default.
 
-**One follow-up worth considering**: truncating a 60-100 word caption to 280 characters produces a mid-sentence cut-off post, which is legal but not good. The better fix is asking Claude for a short X-native caption alongside the long one at generation time, rather than amputating the long one at publish time.
+**Follow-up done 2026-09-24**: X now gets its own caption instead of an amputated one. Both generation functions ask Claude for an `x_caption` alongside the long one — the same story written natively for X, sized to a budget computed from whether a link and disclosure will be appended (280 alone; 198 with the Amazon disclosure and a tracked link, minus 30 characters of headroom because models don't count characters reliably). `captionForPlatform()` uses it for the X row only; every other platform keeps the long caption.
+
+**The budget had to be expressed in words, not characters.** Three real runs were needed to land this, and the sequence is the lesson: asking for "at most 280 characters" came back over; asking for "at most 250" (30 characters of headroom) came back over *again* at 273 and 274 characters, both trimmed mid-sentence. Models do not count characters reliably. Asking for **"at most 35 words (hard limit 280 characters)"** produced 228 characters / 36 words, untruncated, on the first try. The conversion is a deliberately conservative ~7 characters per word including the space.
+
+`truncateForX` stays as the guard for what the budget can't cover — a missing or over-long `x_caption`, a manually-created post, or a row generated before this existed — and it earned its keep immediately: the first real run came back over 280 anyway and was trimmed. Two refinements followed from watching that output:
+- The trailing paragraph is now preserved **whole** when it contains a URL, because that paragraph is the link *and its affiliate disclosure*. Truncating into a legally-required disclosure is not an acceptable failure mode, and the previous URL-only logic would have done exactly that.
+- No ellipsis is appended when the cut lands on sentence-ending punctuation. A real post read `"Nobody asked for this.…"`, which just looks like a typo.
+
+Live result on the final run: Instagram 559 characters, Facebook 691 (caption + disclosure + link), X **228** — a genuinely different, self-contained post rather than the first 280 characters of the long one.
+
+All of this now lives in `supabase/functions/_shared/x-text.ts`, shared between the generation and publish paths, so the weighted-length rules have exactly one definition.
 
 ### Possible root cause for the failures that do occur (identified 2026-09-23, not yet tried)
 

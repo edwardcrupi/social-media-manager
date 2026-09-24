@@ -15,7 +15,7 @@ import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0'
 import { createClient } from 'npm:@supabase/supabase-js@2.116.0'
 import {
   campaignSlug,
-  captionWithLink,
+  captionForPlatform,
   fetchActiveOffers,
   fetchPerformanceDigest,
   insertShortLinks,
@@ -23,6 +23,7 @@ import {
   offerPromptLines,
   resolveOffer,
   shortLinkUrl,
+  xCaptionPromptLines,
 } from '../_shared/monetization.ts'
 import type { PendingShortLink } from '../_shared/monetization.ts'
 
@@ -32,6 +33,9 @@ interface TrendPostIdea {
   tag: string
   source_url: string
   source_summary: string
+  // Drafted natively for X rather than truncated from `body` -- see
+  // captionForPlatform. Optional: the code falls back to truncation.
+  x_caption?: unknown
   // Present only when the user has active affiliate_offers -- validated
   // against the real offer list before use, never trusted as an id.
   offer_id?: unknown
@@ -182,12 +186,13 @@ Deno.serve(async (req) => {
         `For each trend, draft a short-form social media post (60-100 words) in this brand voice: ${settings.brand_voice || 'clear, friendly, conversational'}.`,
         'Each post must reference a real, specific, currently-trending item you found via search -- do not invent trends.',
         ...offerPromptLines(offers),
+        ...xCaptionPromptLines(offers, settings.x_inline_links_enabled === true),
         performanceDigest ?? '',
         '',
         'Respond with ONLY a JSON array (no markdown fences, no prose before or after) of objects shaped exactly like:',
         offers.length > 0
-          ? '{"title": string, "body": string, "tag": string, "source_url": string, "source_summary": string, "offer_id": string}'
-          : '{"title": string, "body": string, "tag": string, "source_url": string, "source_summary": string}',
+          ? '{"title": string, "body": string, "tag": string, "source_url": string, "source_summary": string, "x_caption": string, "offer_id": string}'
+          : '{"title": string, "body": string, "tag": string, "source_url": string, "source_summary": string, "x_caption": string}',
       ]
         .filter(Boolean)
         .join(' ')
@@ -278,7 +283,14 @@ Deno.serve(async (req) => {
             ...base,
             id: postId,
             social_profile_id: target.id,
-            body: captionWithLink(idea.body, target.platform, linkUrl, settings.x_inline_links_enabled === true, offer?.disclosure),
+            body: captionForPlatform({
+              platform: target.platform,
+              body: idea.body,
+              xCaption: idea.x_caption,
+              url: linkUrl,
+              xInlineLinksEnabled: settings.x_inline_links_enabled === true,
+              disclosure: offer?.disclosure ?? null,
+            }),
           })
           if (offer && slug) {
             pendingLinks.push({

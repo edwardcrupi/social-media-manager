@@ -9,7 +9,7 @@ import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0'
 import { createClient } from 'npm:@supabase/supabase-js@2.116.0'
 import {
   campaignSlug,
-  captionWithLink,
+  captionForPlatform,
   fetchActiveOffers,
   fetchPerformanceDigest,
   insertShortLinks,
@@ -17,6 +17,7 @@ import {
   offerPromptLines,
   resolveOffer,
   shortLinkUrl,
+  xCaptionPromptLines,
 } from '../_shared/monetization.ts'
 import type { PendingShortLink } from '../_shared/monetization.ts'
 
@@ -27,6 +28,9 @@ interface ReelIdea {
   tag: string
   source_url: string
   source_summary: string
+  // Drafted natively for X rather than truncated from `body` -- see
+  // captionForPlatform. Optional: the code falls back to truncation.
+  x_caption?: unknown
   // Present only when the user has active affiliate_offers -- validated
   // against the real offer list before use, never trusted as an id.
   offer_id?: unknown
@@ -184,12 +188,13 @@ Deno.serve(async (req) => {
         // stories from being covered at all.
         'When the story is about one AI system training, building, or improving another AI system, avoid depicting that literally as one entity autonomously constructing, assembling, or replicating a copy of another (e.g. an orb building a smaller orb, a robot building another robot) -- prefer a visual metaphor that implies progress or capability growth without showing autonomous self-replication, such as a single evolving/upgrading shape, a growing network graph, an ascending chart, or a tool being refined on a workbench by an unseen hand.',
         ...offerPromptLines(offers),
+        ...xCaptionPromptLines(offers, settings.x_inline_links_enabled === true),
         performanceDigest ?? '',
         '',
         'Respond with ONLY a JSON array (no markdown fences, no prose before or after) of objects shaped exactly like:',
         offers.length > 0
-          ? '{"title": string, "video_prompt": string, "caption": string, "tag": string, "source_url": string, "source_summary": string, "offer_id": string}'
-          : '{"title": string, "video_prompt": string, "caption": string, "tag": string, "source_url": string, "source_summary": string}',
+          ? '{"title": string, "video_prompt": string, "caption": string, "tag": string, "source_url": string, "source_summary": string, "x_caption": string, "offer_id": string}'
+          : '{"title": string, "video_prompt": string, "caption": string, "tag": string, "source_url": string, "source_summary": string, "x_caption": string}',
       ]
         .filter(Boolean)
         .join(' ')
@@ -267,7 +272,14 @@ Deno.serve(async (req) => {
             ...base,
             id: postId,
             social_profile_id: target.id,
-            body: captionWithLink(idea.caption, target.platform, linkUrl, settings.x_inline_links_enabled === true, offer?.disclosure),
+            body: captionForPlatform({
+              platform: target.platform,
+              body: idea.caption,
+              xCaption: idea.x_caption,
+              url: linkUrl,
+              xInlineLinksEnabled: settings.x_inline_links_enabled === true,
+              disclosure: offer?.disclosure ?? null,
+            }),
           })
           if (offer && slug) {
             pendingLinks.push({

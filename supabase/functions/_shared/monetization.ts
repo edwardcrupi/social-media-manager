@@ -10,6 +10,7 @@
 // each function; it is not itself a deployable function.
 
 // deno-lint-ignore-file no-explicit-any
+import { truncateForX, xCaptionBudget } from './x-text.ts'
 
 export interface AffiliateOffer {
   id: string
@@ -125,6 +126,56 @@ export function captionWithLink(
     return `${body}\n\n${tail}`
   }
   return body
+}
+
+// Builds the caption for one platform's post row.
+//
+// X gets its own separately-drafted caption rather than the long one cut down
+// to size. Instagram captions run 60-100 words, which is roughly double X's
+// limit, so truncating produced a post that stopped mid-sentence -- legal,
+// but bad writing published automatically to a public account. The model
+// drafts `x_caption` to a budget instead, and truncateForX stays as a guard
+// for the cases that budget can't cover (a missing or over-long x_caption, a
+// manually-created post, a row generated before x_caption existed).
+export function captionForPlatform(args: {
+  platform: string | null
+  body: string
+  xCaption?: unknown
+  url: string | null
+  xInlineLinksEnabled: boolean
+  disclosure: string | null
+}): string {
+  const { platform, body, xCaption, url, xInlineLinksEnabled, disclosure } = args
+  if (platform !== 'x') {
+    return captionWithLink(body, platform, url, xInlineLinksEnabled, disclosure)
+  }
+  const drafted = typeof xCaption === 'string' && xCaption.trim().length > 0 ? xCaption.trim() : body
+  return truncateForX(captionWithLink(drafted, 'x', url, xInlineLinksEnabled, disclosure))
+}
+
+// Prompt lines asking for the X-native caption, sized to whatever will be
+// appended to it on this account's configuration.
+export function xCaptionPromptLines(
+  offers: AffiliateOffer[],
+  xInlineLinksEnabled: boolean,
+): string[] {
+  // The offer (and so the disclosure) is chosen by the model after this
+  // prompt is built, so budget against the longest disclosure on file.
+  const longestDisclosure = offers
+    .map((offer) => offer.disclosure ?? '')
+    .reduce((longest, current) => (current.length > longest.length ? current : longest), '')
+  const willAppendLink = xInlineLinksEnabled && offers.length > 0
+  const hardLimit = xCaptionBudget(willAppendLink, longestDisclosure || null)
+  // Budget expressed in WORDS, not characters. Two real runs asked for a
+  // character count (280, then 250 with headroom) and both came back over the
+  // limit and were trimmed -- the exact outcome this feature exists to avoid.
+  // Models count words far better than characters, so the ask is a word
+  // target with the character cap kept only as a backstop. ~7 characters per
+  // word including the space is a deliberately conservative conversion.
+  const wordBudget = Math.max(18, Math.floor((hardLimit - 30) / 7))
+  return [
+    `Also write "x_caption": a version of the same post written natively for X, at most ${wordBudget} words (hard limit ${hardLimit} characters -- stay clearly under it). It must be a complete, self-contained post that stands on its own -- NOT the longer caption cut short, and it must never end mid-sentence or trail off. Keep the same story and voice; cut detail rather than running long. Do not include any URL in it.`,
+  ]
 }
 
 export interface PendingShortLink {

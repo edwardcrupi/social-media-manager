@@ -7,6 +7,7 @@
 // used here to publish a text-only post -- X and Facebook could, but this
 // app never generates one).
 import { createClient } from 'npm:@supabase/supabase-js@2.116.0'
+import { truncateForX } from '../_shared/x-text.ts'
 
 const GRAPH_VERSION = 'v26.0'
 const CONTAINER_POLL_DELAY_MS = 3000
@@ -14,11 +15,6 @@ const TIKTOK_STATUS_POLL_DELAY_MS = 3000
 const TIKTOK_STATUS_POLL_ATTEMPTS = 20
 const X_MEDIA_CHUNK_BYTES = 4 * 1024 * 1024
 const X_MEDIA_STATUS_POLL_ATTEMPTS = 30
-// X counts *weighted* length, not JavaScript string length: most characters
-// weigh 1, but anything outside the ranges in xCharWeight() weighs 2, and a
-// URL always counts as exactly 23 regardless of its real length (t.co).
-const X_TWEET_MAX_WEIGHTED = 280
-const X_URL_WEIGHTED_LENGTH = 23
 // Without a cap, a post whose platform is persistently broken (e.g. a stuck
 // 403) stays status='scheduled' forever and gets re-selected -- and its
 // media re-downloaded from Storage -- on every single cron run indefinitely.
@@ -329,81 +325,6 @@ async function uploadMediaToX(mediaUrl: string, mediaType: string, accessToken: 
   }
 
   return mediaId
-}
-
-// The weight-1 ranges from X's twitter-text configuration; everything else
-// weighs 2. Worth knowing: U+2026 (…) is NOT in these ranges, so a single
-// ellipsis costs two characters -- see truncateForX below for why that one
-// detail cost this project a week.
-function xCharWeight(codePoint: number): number {
-  if (codePoint <= 0x10ff) return 1
-  if (codePoint >= 0x2000 && codePoint <= 0x200d) return 1
-  if (codePoint >= 0x2010 && codePoint <= 0x201f) return 1
-  if (codePoint >= 0x2032 && codePoint <= 0x2037) return 1
-  return 2
-}
-
-function xWeightedLength(text: string): number {
-  let total = 0
-  // Iterating a string with for..of walks code points, not UTF-16 units, so
-  // an emoji is measured (and later sliced) as one unit rather than two.
-  for (const char of text) total += xCharWeight(char.codePointAt(0) as number)
-  return total
-}
-
-// **This function is why X "was broken" from 2026-09-16 to 2026-09-24.**
-//
-// The previous version did `text.slice(0, 279) + '…'` -- exactly 280
-// JavaScript characters, which looks correct and is wrong: X weighs the
-// ellipsis as 2, making every truncated tweet 281 weighted characters, one
-// over the limit. X rejects that with `403 You are not permitted to perform
-// this action`, a generic RFC7807 body with no `reason` field and no mention
-// of length, which reads exactly like an app-permission or enrollment
-// problem. Diagnosis chased X's Pay-Per-Use enrollment for a week on that
-// misreading; see PLAN.md Phase 10.
-//
-// The tell was in the data all along: every X post that published had a
-// caption under 280 (all videos, plus one manual image test), and every post
-// that failed was a 419-502 character auto-generated image caption. It was
-// never image-vs-video -- it was truncated-vs-not.
-//
-// Also keeps a trailing URL whole (Phase 12 appends a tracked short link to
-// clickable-caption platforms): slicing a URL in half gives a tweet that is
-// both unclickable and billed at X's $0.20 with-a-URL rate instead of
-// $0.015.
-function truncateForX(text: string): string {
-  const trailingUrl = text.match(/\s(https?:\/\/\S+)\s*$/)
-  const hasUrl = trailingUrl !== null && trailingUrl.index !== undefined
-  const url = hasUrl ? trailingUrl[1] : null
-  const body = hasUrl ? text.slice(0, trailingUrl.index).trimEnd() : text
-
-  // A URL always weighs 23, plus 2 for the "\n\n" that separates it.
-  const urlCost = url ? X_URL_WEIGHTED_LENGTH + 2 : 0
-  if (xWeightedLength(body) + urlCost <= X_TWEET_MAX_WEIGHTED) {
-    return url ? `${body}\n\n${url}` : body
-  }
-
-  // Budget for the body itself: the limit, minus the URL, minus 2 for the
-  // ellipsis that will be appended.
-  const budget = X_TWEET_MAX_WEIGHTED - urlCost - 2
-  if (budget <= 0) return url ?? ''
-
-  let kept = ''
-  let weight = 0
-  for (const char of body) {
-    const charWeight = xCharWeight(char.codePointAt(0) as number)
-    if (weight + charWeight > budget) break
-    kept += char
-    weight += charWeight
-  }
-
-  // Back off to a word boundary so the tweet doesn't end mid-word, but only
-  // if that doesn't throw away a big chunk of the caption.
-  const lastSpace = kept.lastIndexOf(' ')
-  if (lastSpace > budget * 0.6) kept = kept.slice(0, lastSpace)
-  kept = kept.trimEnd().replace(/[,;:—-]$/, '').trimEnd()
-
-  return url ? `${kept}…\n\n${url}` : `${kept}…`
 }
 
 async function publishToX(post: Record<string, unknown>, accessToken: string) {
