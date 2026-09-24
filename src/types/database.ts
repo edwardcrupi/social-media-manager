@@ -7,10 +7,10 @@
 // `Record<string, unknown>`, and TypeScript only grants that to type
 // literals (interfaces are treated as open/augmentable and rejected).
 
-export type Platform = 'instagram' | 'tiktok' | 'pinterest' | 'other'
+export type Platform = 'instagram' | 'tiktok' | 'pinterest' | 'x' | 'facebook' | 'other'
 export type Accent = 'coral' | 'yellow' | 'blue'
 export type ConnectionStatus = 'manual' | 'pending' | 'connected' | 'error'
-export type PostStatus = 'draft' | 'ready' | 'generating' | 'scheduled' | 'published'
+export type PostStatus = 'draft' | 'ready' | 'generating' | 'scheduled' | 'published' | 'failed'
 export type PostSource = 'manual' | 'auto'
 export type MediaType = 'image' | 'video'
 
@@ -57,6 +57,10 @@ export type PostRow = {
   media_url: string | null
   media_type: MediaType
   video_job_id: string | null
+  video_prompt: string | null
+  platform_media_id: string | null
+  failure_reason: string | null
+  publish_attempts: number
   scheduled_for: string | null
   published_at: string | null
   created_at: string
@@ -72,6 +76,9 @@ export type PostInsert = {
   media_url?: string | null
   media_type?: MediaType
   video_job_id?: string | null
+  video_prompt?: string | null
+  platform_media_id?: string | null
+  failure_reason?: string | null
   trend_source?: TrendSource | null
   scheduled_for?: string | null
   published_at?: string | null
@@ -82,6 +89,7 @@ export type ShortLinkRow = {
   id: string
   user_id: string
   post_id: string | null
+  affiliate_offer_id: string | null
   slug: string
   destination_url: string
   utm_source: string | null
@@ -94,6 +102,7 @@ export type ShortLinkInsert = {
   slug: string
   destination_url: string
   post_id?: string | null
+  affiliate_offer_id?: string | null
   utm_source?: string | null
   utm_medium?: string | null
   utm_campaign?: string | null
@@ -139,6 +148,31 @@ export type RevenueEventInsert = {
 }
 export type RevenueEventUpdate = Partial<RevenueEventInsert>
 
+// affiliate_offers: what the generation functions attach to every post they
+// create (Phase 12 Step 1). destination_url is deliberately anything --
+// an affiliate tracking link, a product page, or your own newsletter signup.
+export type AffiliateOfferRow = {
+  id: string
+  user_id: string
+  program_name: string
+  destination_url: string
+  keywords: string[]
+  category: string | null
+  priority: number
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+export type AffiliateOfferInsert = {
+  program_name: string
+  destination_url: string
+  keywords?: string[]
+  category?: string | null
+  priority?: number
+  active?: boolean
+}
+export type AffiliateOfferUpdate = Partial<AffiliateOfferInsert>
+
 export type AutomationSettingsRow = {
   user_id: string
   niche_description: string | null
@@ -147,11 +181,34 @@ export type AutomationSettingsRow = {
   daily_auto_post_cap: number
   daily_reel_cap: number
   auto_posting_enabled: boolean
+  // X bills 13x for a post containing a URL, so inline X links are opt-in.
+  x_inline_links_enabled: boolean
+  // Link-in-bio page (Phase 12 Step 2). A null bio_slug means the public
+  // page is off.
+  bio_slug: string | null
+  bio_headline: string | null
+  bio_subhead: string | null
+  bio_avatar_url: string | null
+  bio_handle: string | null
   updated_at: string
 }
 export type AutomationSettingsUpdate = Partial<
   Omit<AutomationSettingsRow, 'user_id' | 'updated_at'>
 >
+
+// platform_metrics is written only by sync-instagram-insights
+// (service_role) -- the frontend only ever selects from it.
+export type PlatformMetricRow = {
+  id: string
+  user_id: string
+  social_profile_id: string
+  post_id: string | null
+  metric_scope: string
+  metric_name: string
+  metric_value: number
+  metric_date: string
+  updated_at: string
+}
 
 export type Database = {
   public: {
@@ -190,6 +247,18 @@ export type Database = {
         Row: AutomationSettingsRow
         Insert: AutomationSettingsUpdate & { user_id?: string }
         Update: AutomationSettingsUpdate
+        Relationships: []
+      }
+      platform_metrics: {
+        Row: PlatformMetricRow
+        Insert: Record<string, never>
+        Update: Record<string, never>
+        Relationships: []
+      }
+      affiliate_offers: {
+        Row: AffiliateOfferRow
+        Insert: AffiliateOfferInsert
+        Update: AffiliateOfferUpdate
         Relationships: []
       }
     }

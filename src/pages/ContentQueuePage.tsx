@@ -76,7 +76,7 @@ export function ContentQueuePage() {
       </section>
 
       <section className="panel queue-panel">
-        {isLoading ? <p className="empty-state">Loading…</p> : <QueueList posts={posts ?? []} />}
+        {isLoading ? <p className="empty-state">Loading…</p> : <QueueList posts={posts ?? []} profiles={profiles ?? []} />}
       </section>
     </>
   )

@@ -93,7 +93,7 @@ export function OverviewPage() {
             <h2>Content queue</h2>
           </div>
         </div>
-        <QueueList posts={queuedPosts.slice(0, 5)} />
+        <QueueList posts={queuedPosts.slice(0, 5)} profiles={profiles ?? []} />
       </section>
 
       {showComposer && (

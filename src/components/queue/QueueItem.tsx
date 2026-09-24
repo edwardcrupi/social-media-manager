@@ -1,7 +1,7 @@
-import type { PostRow, PostStatus } from '../../types/database'
+import type { PostRow, PostStatus, SocialProfileRow } from '../../types/database'
 
 const dateColors = ['coral', 'yellow', 'blue']
-const STATUSES: PostStatus[] = ['draft', 'ready', 'generating', 'scheduled', 'published']
+const STATUSES: PostStatus[] = ['draft', 'ready', 'generating', 'scheduled', 'published', 'failed']
 
 const dayFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 const timeFormatter = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' })
@@ -9,11 +9,13 @@ const timeFormatter = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute
 export function QueueItem({
   post,
   index,
+  profile,
   onStatusChange,
   onDelete,
 }: {
   post: PostRow
   index: number
+  profile: SocialProfileRow | undefined
   onStatusChange: (post: PostRow, status: PostStatus) => void
   onDelete: (post: PostRow) => void
 }) {
@@ -38,13 +40,19 @@ export function QueueItem({
       )}
       {post.media_url && post.media_type === 'image' && <img className="queue-thumb" src={post.media_url} alt="" />}
       {!post.media_url && post.status === 'generating' && <span className="queue-thumb queue-thumb-pending">⏳</span>}
+      {!post.media_url && post.status === 'failed' && <span className="queue-thumb queue-thumb-pending">✕</span>}
       <div className="queue-title">
         <strong>{post.title}</strong>
         <span>
+          {profile ? `${profile.platform.charAt(0).toUpperCase()}${profile.platform.slice(1)}` : 'Unassigned'}
+          {' · '}
           {post.tag ?? 'Untagged'}
           {post.media_type === 'video' && ' · Reel'}
           {post.source === 'auto' && ' · Auto'}
         </span>
+        {post.status === 'failed' && post.failure_reason && (
+          <p className="queue-body login-error">Generation failed: {post.failure_reason}</p>
+        )}
         {post.body && <p className="queue-body">{post.body}</p>}
         {post.trend_source && (
           <a className="queue-source-link" href={post.trend_source.url} target="_blank" rel="noreferrer">
@@ -53,7 +61,7 @@ export function QueueItem({
         )}
       </div>
       <select
-        className={`status ${post.status === 'draft' || post.status === 'generating' ? 'draft' : 'ready'}`}
+        className={`status ${post.status === 'draft' || post.status === 'generating' || post.status === 'failed' ? 'draft' : 'ready'}`}
         value={post.status}
         onChange={(event) => onStatusChange(post, event.target.value as PostStatus)}
         aria-label="Post status"
