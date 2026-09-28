@@ -7,6 +7,7 @@ import { useSocialProfiles } from '../hooks/useSocialProfiles'
 import { MetricCard } from '../components/metrics/MetricCard'
 import { RevenueChart } from '../components/chart/RevenueChart'
 import { QueueList } from '../components/queue/QueueList'
+import { groupBySharedMedia } from '../lib/postGroups'
 import { ProfileCard } from '../components/profiles/ProfileCard'
 
 const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
@@ -93,7 +94,8 @@ export function OverviewPage() {
             <h2>Content queue</h2>
           </div>
         </div>
-        <QueueList posts={queuedPosts.slice(0, 5)} profiles={profiles ?? []} />
+        {/* Five ideas, not five rows -- one idea is up to four platform rows. */}
+        <QueueList groups={groupBySharedMedia(queuedPosts).slice(0, 5)} profiles={profiles ?? []} />
       </section>
 
       {showComposer && (

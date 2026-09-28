@@ -4,6 +4,15 @@ import type { PostInsert, PostUpdate } from '../types/database'
 
 const KEY = ['posts']
 
+// Deliberately unpaginated. Overview, Insights and Revenue all count and
+// filter across the whole set, so capping this would silently skew every
+// number on those pages rather than showing an obvious truncation. The
+// Content Queue, which is the only page that renders a row per post, limits
+// what it draws instead -- see ContentQueuePage.
+//
+// This does have a ceiling: PostgREST caps a response at 1000 rows, and at
+// a few posts a day that is roughly a year out. Past that, these pages need
+// real aggregate queries rather than a bigger fetch.
 export function usePosts() {
   return useQuery({
     queryKey: KEY,

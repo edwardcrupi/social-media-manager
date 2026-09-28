@@ -97,7 +97,7 @@ async function generateAndUploadImage(supabase: any, openaiApiKey: string, userI
   const path = `${userId}/${crypto.randomUUID()}.png`
   const { error: uploadError } = await supabase.storage
     .from('post-images')
-    .upload(path, bytes, { contentType: 'image/png' })
+    .upload(path, bytes, { contentType: 'image/png', cacheControl: IMMUTABLE_CACHE_CONTROL })
   if (uploadError) throw uploadError
 
   const { data: publicUrlData } = supabase.storage.from('post-images').getPublicUrl(path)

@@ -12,6 +12,8 @@
 // resubmit with audio disabled rather than being marked failed outright --
 // see isAudioCopyrightFailure/resubmitWithoutAudio below.
 import { createClient } from 'npm:@supabase/supabase-js@2.116.0'
+import { IMMUTABLE_CACHE_CONTROL } from '../_shared/storage.ts'
+import { toFaststart } from '../_shared/faststart.ts'
 
 const ARK_BASE_URL = 'https://ark.ap-southeast.bytepluses.com/api/v3'
 const SCHEDULE_DELAY_HOURS = 1
@@ -133,10 +135,27 @@ Deno.serve(async (req) => {
       if (!videoRes.ok) throw new Error(`Failed to download generated video (HTTP ${videoRes.status})`)
       const videoBytes = new Uint8Array(await videoRes.arrayBuffer())
 
+      // Seedance hands back [ftyp][uuid][free][mdat][moov], with the index
+      // in the last 13KB of a 17MB file, which makes reading a single frame
+      // absurdly expensive for every downstream consumer -- our own queue
+      // thumbnails most of all. Reordering costs nothing here because the
+      // bytes are already in memory, and it is a pure move: no re-encode.
+      // Never fatal -- a video we can't reorder is still a perfectly good
+      // video, so fall back to uploading it as Seedance sent it.
+      let uploadBytes = videoBytes
+      let faststart = 'skipped'
+      try {
+        const result = toFaststart(videoBytes)
+        uploadBytes = result.bytes
+        faststart = result.changed ? `moved moov (${result.offsetsPatched} offsets)` : result.reason
+      } catch (error) {
+        faststart = `failed: ${error instanceof Error ? error.message : 'unknown error'}`
+      }
+
       const path = `${posts[0].user_id}/${crypto.randomUUID()}.mp4`
       const { error: uploadError } = await supabase.storage
         .from('post-videos')
-        .upload(path, videoBytes, { contentType: 'video/mp4' })
+        .upload(path, uploadBytes, { contentType: 'video/mp4', cacheControl: IMMUTABLE_CACHE_CONTROL })
       if (uploadError) throw uploadError
 
       const { data: publicUrlData } = supabase.storage.from('post-videos').getPublicUrl(path)
@@ -151,7 +170,7 @@ Deno.serve(async (req) => {
         .in('id', postIds)
       if (updateError) throw updateError
 
-      results.push({ postIds, status: 'ready', mediaUrl: publicUrlData.publicUrl })
+      results.push({ postIds, status: 'ready', mediaUrl: publicUrlData.publicUrl, faststart })
     } catch (error) {
       results.push({ postIds, error: error instanceof Error ? error.message : 'unknown error' })
     }

@@ -47,6 +47,26 @@ yet.
 
 ## Start here
 
+0. **Egress — spike fixed, recurring cost halved. Deployed 2026-09-28.**
+   `daily_reel_cap` lowered **2 → 1** (live in `automation_settings`, not a
+   code change), which cuts cached egress from ~2.75 to **~1.58 GB/month**.
+   Video publishing was 83% of it: every connected platform reads the same
+   Storage object in full, and every read after the first is cached egress.
+   Still available if more headroom is needed, in order of cost:
+   drop TikTok from the video fan-out (~0.8 GB/mo, free while TikTok is
+   `SELF_ONLY` with no public reach), Meta crossposting (~0.8 GB/mo, real
+   work), `resolution: '480p'` (~1.7 GB/mo, visible quality loss — rejected
+   once already). **There is no bitrate parameter**; see NOTES.md.
+   Details of the original spike: 0018 applied,
+   all four functions deployed, and `backfill-faststart` run to `done: true`:
+   **all 30 videos verified faststart** (second top-level atom is `moov`,
+   checked with a 64-byte range request each). Posters backfill themselves
+   as the queue is scrolled.
+   **Still open**: Storage serves `cache-control: no-cache` regardless of
+   what the object stores, because this project's gateway is in `direct`
+   mode and honoring `cacheControl` is a Smart CDN (paid plan) feature. So
+   repeat loads still revalidate. Worth pricing against the egress it would
+   save — the numbers are in NOTES.md "Storage egress".
 1. **Decide the performance-digest floor.** The Step 3 feedback loop is on, but its 20 rows have a median reach of **1** and zero clicks total — it is currently teaching the model noise, which is what the gate was meant to prevent. The gate counts posts *with* metrics, not whether those metrics mean anything. Add a minimum-reach floor (or require non-zero clicks) in `fetchPerformanceDigest`. One line; the threshold is a judgment call about when the account is expected to grow.
 2. **Host the bio page.** Step 2 works but its HTML can't be served from `*.supabase.co` — Supabase rewrites Edge Function `text/html` to `text/plain` with a sandboxing CSP. `?format=json` returns the content, so what's left is a front end to render it: a free Vercel/Netlify deploy of this app with a public `/bio/:slug` route, or a Supabase custom domain. The app currently runs only on localhost, and an Instagram bio link needs a public URL regardless.
 3. **Add more offers.** Only one exists (Amazon Associates). Multi-offer selection and the hallucinated-`offer_id` fallback are both unexercised, because with a single active offer every code path returns the same row. Any affiliate link, product page, or your own newsletter works — see NOTES.md Step 1.
@@ -71,6 +91,34 @@ These recur across integrations, and each one cost real time:
 - **Cron HTTP timeout is capped at 5000ms** and can't be raised. The function keeps running server-side past it, so `posts.status` is the source of truth, not the cron log.
 - **Cron jobs need explicit `apikey` + `Authorization` headers**; the trigger sends none, and the function 401s without them.
 - **Supabase won't serve HTML from an Edge Function** on the shared domain.
+- **`--no-verify-jwt` is sticky.** The deploy API retains whatever a previous
+  deploy set, so re-deploying *without* the flag does not restore the
+  default — the function stays open. It hit `generate-trend-posts`, which
+  spends real Claude + OpenAI money per call and auto-publishes with no
+  review step. `verify_jwt` is now pinned per function in
+  `supabase/config.toml`; check `supabase functions list` after any deploy.
+- **Fixing one cause of a bill is not fixing the bill.** Migration 0012 closed
+  a server-side retry loop and reads like the end of the egress story; a
+  second, unrelated leak was live for another five days. **Read the *type* of
+  egress first** — "cached" means repeat hits on the same object, which a
+  server-side loop cannot produce. See NOTES.md "Storage egress".
+- **`no-cache` does not mean "not cached".** It means revalidate, and a
+  matching revalidation returns `304` with no body — verified against live
+  Storage for both `If-None-Match` and `If-Modified-Since`. Repeat loads from
+  a warm cache already cost ~0 bytes, so Smart CDN / Pro buys very little
+  here. What browser caching never covered is `<video>` range requests,
+  which is why thumbnails were expensive and `<img>` posters are not.
+  Separately: the served header ignores the object's stored `cacheControl`
+  (`sb-gateway-mode: direct` — honoring it is a Smart CDN feature), so
+  compare stored metadata via `POST /storage/v1/object/list/<bucket>` against
+  the response header before trying to fix that in code.
+- **The recurring egress is the publish fan-out, not the dashboard.** Each
+  platform reads the whole object; every read after the first bills as
+  cached egress. Look there before looking at the front end.
+- **`moov` at the end of an MP4 is expensive for everyone.** Seedance writes
+  non-faststart files, so reading one frame pulled most of a 17MB video.
+  Moving `moov` to the front makes it ~153KB. Anything ingesting these URLs
+  (Instagram, TikTok, X) pays the same tax.
 
 ## Phase 12 — remaining steps
 

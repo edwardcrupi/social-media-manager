@@ -528,6 +528,225 @@ This is the highest leverage per line of code in the phase: it compounds, and it
 
 ---
 
+## Storage egress — two separate leaks, one of them still open until 09-28
+
+**Two different incidents, and conflating them wasted time.** Migration 0012
+records the first and reads as though it closed the matter. It did not.
+
+| | 09-16 → 09-23 | 09-24 |
+|---|---|---|
+| Egress type | origin | **cached** |
+| Cause | `publish-scheduled-posts` re-downloading media for stuck posts every 15 min | the Content Queue's video thumbnails |
+| Fix | `MAX_PUBLISH_ATTEMPTS = 5` (0012) | this section |
+
+**The "cached" column is the whole diagnosis.** Cached egress is bytes served
+from the CDN, i.e. repeat requests for the *same* object. A server-side retry
+loop does not produce that shape; a browser re-requesting the same URLs does.
+Reading the type of egress first would have separated these immediately.
+
+### What the queue was actually doing
+
+`QueueItem` rendered `<video src={`${media_url}#t=0.5`} preload="metadata">`
+per video row to paint a 56px tile. Four things compounded:
+
+1. **`usePosts` selects every post, unpaginated** — 242 rows, **97 of them
+   video**.
+2. **Those 97 rows point at only 30 distinct objects.** The Phase 10 fan-out
+   gives each platform its own row sharing one upload: avg **3.23 rows per
+   object**, 20 objects referenced by 4 rows each. One page load =
+   97 requests for 30 files. The 67 duplicates are CDN hits — the cached
+   egress.
+3. **Seedance's MP4s are not faststart.** Verified by parsing the atom table:
+   the layout is `[ftyp][uuid][free][mdat][moov]`, with `moov` — the index —
+   in the **last 13KB of a 17MB file**. `preload="metadata"` cannot be
+   satisfied from the head of the file, and `#t=0.5` forces a seek and a
+   frame decode.
+4. **Nothing was browser-cacheable.** Every object serves
+   `cache-control: no-cache`, so the browser revalidates on every load. See
+   the correction below — the cause is *not* the missing `cacheControl` on
+   the upload calls, which is what it first looked like.
+
+The 30 videos total **372 MiB** (avg 12.4MB, max 17.4MB), so a full render
+cost on the order of 830MB of cached egress.
+
+### The fix that matters: faststart
+
+The expensive part was never the thumbnail, it was `moov` being at the end.
+Measured on a real file: `moov` is 13,079 bytes, and sample 1 *is* a
+keyframe at offset 21,724, 139,544 bytes long. With `moov` at the front a
+browser gets a frame in **~153KB against 17.4MB — 114x less** — natively, via
+Range requests, with no client-side MP4 handling at all.
+
+`_shared/faststart.ts` reorders `[ftyp][uuid][free][mdat][moov]` into
+`[ftyp][moov][uuid][free][mdat]`. It is a pure byte move — no re-encode, no
+decode — and the only edit is adding the moov size to every `stco`/`co64`
+entry, since those hold absolute file offsets.
+
+- **`check-video-jobs` does this for new videos at upload time, for free**,
+  because it already holds the bytes in memory.
+- **`backfill-faststart`** (manual, resumable, idempotent) converts the ones
+  uploaded before that existed. It probes each object with a 64-byte range
+  request and only downloads the ones that need it, so re-running it once
+  everything is converted costs almost nothing.
+
+**Verified**: 15 real videos remuxed and decoded with ffmpeg — every frame of
+the full stream hashes identically before and after (`-f md5`), and the 0.5s
+frame is bit-identical. The transform is also byte-identical to a Python
+prototype of the same logic, and idempotent (a second pass reports "already
+faststart"). `ffmpeg -movflags +faststart` produces a file 21,676 bytes
+smaller because it discards the `uuid` atom; this preserves it.
+
+> Verification was stopped at 15 of 30 files on purpose. Downloading the rest
+> would have spent another ~190MB of the very quota being repaired, and
+> Storage starts returning `{"code":"NoSuchBucket"}` under that much
+> hammering anyway — a **throttle response, not a missing bucket**, which is
+> worth knowing before it gets diagnosed as data loss.
+
+### The rest of the fix
+
+- **`posts.poster_url`** (0018) + **`save-poster`**: a video row with no
+  poster is captured once in a canvas and stored as a ~40KB JPEG in
+  `post-thumbnails`. On a faststart video that capture costs ~153KB, not
+  12MB. It goes through a function rather than a direct client upload so
+  Storage stays write-only to the service role. `save-poster` writes the
+  poster back to **every row sharing that `media_url`**, so the fan-out
+  siblings never each capture their own.
+- **`IMMUTABLE_CACHE_CONTROL`** on all three uploads. Every object is named
+  by a fresh UUID and never overwritten, so `max-age=31536000` is safe.
+  **This is stored but currently has no effect on what is served** — see the
+  correction below. Kept because it is correct, costs nothing, and starts
+  working the moment the gateway does.
+- **Queue pagination is render-side** (`PAGE_SIZE = 25` ideas). `usePosts`
+  stays unpaginated deliberately — Overview, Insights and Revenue all count
+  and filter across the full set, and truncating it would silently skew every
+  number on those pages instead of failing visibly. Ceiling to watch:
+  PostgREST caps responses at 1000 rows.
+- **`QueueList` groups rows by `media_url`** so one idea renders once. Rows
+  are grouped, never dropped — each platform keeps its own status control and
+  its own delete button, since a post can succeed on Facebook and fail on X.
+
+### Gotchas worth keeping
+
+- **The `no-cache` header does not come from the upload — it comes from the
+  gateway, and on this project it cannot be overridden.** This was diagnosed
+  wrong twice before the object metadata was actually read, so the sequence
+  is worth keeping:
+  - First guess: supabase-js defaults to `no-cache` when `cacheControl` is
+    omitted. **Wrong.** An untouched object's stored metadata reads
+    `"cacheControl": "max-age=3600"` — supabase-js's documented default was
+    applied all along.
+  - Second guess: passing `cacheControl` explicitly would fix the served
+    header. **Also wrong.** After the backfill, a converted object's stored
+    metadata reads `"cacheControl": "max-age=31536000"` and the response
+    *still* says `cache-control: no-cache`.
+  - Actual cause: the response carries **`sb-gateway-mode: direct`**. In
+    direct mode Storage serves from origin and emits `no-cache` regardless of
+    what the object stores; honoring `cacheControl` is the Smart CDN's job,
+    and that is a paid-plan feature. So `no-cache` is a **plan property, not
+    a code property** on this project.
+  - How to check, without guessing: read the object's stored metadata via
+    `POST /storage/v1/object/list/<bucket>` and compare it to the response
+    header. If they disagree, it is the gateway, not the upload.
+  - Consequence: repeat loads still revalidate, and a revalidated CDN hit is
+    what Supabase bills as *cached* egress. **The cheap per-fetch cost now
+    comes from faststart, not from caching** — which is the more durable fix
+    anyway, since it also helps the platforms that pull these URLs.
+- **A browser-side canvas capture works here only because Storage serves
+  `access-control-allow-origin: *`** — with `crossOrigin="anonymous"` the
+  canvas is not tainted and `toDataURL` succeeds. On a bucket without that
+  header this whole approach is unavailable.
+- **Edge Functions cannot decode video** — Deno, no ffmpeg — which is why the
+  poster is captured in the browser and why the server-side fix is a byte
+  reorder rather than a frame extract.
+- **`preload="auto"` undoes the faststart work.** The poster capture shipped
+  with `preload = 'auto'` for one session, which tells the browser to buffer
+  as much as it can and pulls most of a 13MB file even when `moov` leads.
+  It must be **`'metadata'`**: that fetches the 13KB index, and the seek then
+  range-requests just the keyframe region (~150KB). 14 captures on `'auto'`
+  cost roughly 180MB. The faststart reordering only pays off if the consumer
+  actually asks for a little.
+- **A failed capture is a repeat download.** `seen` resets on every remount
+  (navigation, or a Vite HMR reload), so a video whose capture keeps failing
+  is re-read from Storage every time the queue is opened. `posterCapture`
+  keeps a session-level `failed` set so each video is attempted at most once.
+- **Verifying an egress fix spends egress.** Diagnosing and verifying this
+  cost ~600MB in one day: ~220MB of local downloads, ~180MB from the
+  `preload` bug, and 372MB for the backfill's own read-modify-write of all 30
+  objects. Nearly all one-time, but it means **the day you fix an egress leak
+  is not the day the graph goes down** -- budget for the spike, and don't
+  read it as the fix having failed.
+- **Deleting a `<video>` element's `src` matters.** `posterCapture` removes
+  the attribute and calls `load()` on cleanup, which aborts a still-streaming
+  request instead of letting it run to completion in the background.
+
+---
+
+## Storage egress — the recurring cost is publishing, not the dashboard
+
+Fixing the Content Queue (above) fixed a **spike**. The recurring cost is the
+publish fan-out, and it is structural rather than a bug.
+
+**Every platform reads the same Storage object in full.** Instagram via
+`video_url`/`image_url`, Facebook via `file_url`, TikTok via
+`PULL_FROM_URL`, and X via our own `fetch(mediaUrl)` in
+`publish-scheduled-posts`. The first read is origin egress; **every read
+after it is a cache hit on the same object, which is exactly what Supabase
+bills as cached egress.** Images fan out to 3 platforms
+(`generate-trend-posts` excludes TikTok, which has no image endpoint);
+videos fan out to 4.
+
+Measured inputs: video objects average **13.0MB** (30 objects, 372MiB),
+images **1.38MB** (69 objects, 91MiB), and Seedance encodes 720x1280 at
+**9.3 Mbps** — 3-4x what Instagram and TikTok retain, since both re-encode
+on ingest.
+
+| | total | cached | cached/month |
+|---|---|---|---|
+| `daily_reel_cap = 2` | 125 MB/day | 92 MB/day | 2.75 GB |
+| `daily_reel_cap = 1` (set 2026-09-28) | 73 MB/day | 53 MB/day | **1.58 GB** |
+
+Video was 83% of it, so halving reels was the single biggest lever that did
+not cost quality. Saves ~1.17 GB/month of cached egress against a 5.5GB
+quota, and halves Seedance spend as a side effect. `daily_auto_post_cap`
+stays at 5.
+
+### Levers evaluated and rejected, with why
+
+- **Lower the bitrate — does not exist.** Recommended first, wrongly.
+  ModelArk exposes **no** bitrate, fps or file-size parameter; `resolution`
+  (`480p`/`720p`/`1080p`) is the only output-size control. And
+  `generate-reel-posts` passes no `resolution` at all, so the 720p output is
+  already the default — there was nothing to tighten. Worth pinning
+  `resolution: '720p'` explicitly anyway, so a future default change cannot
+  silently double file sizes.
+- **`resolution: '480p'`** would save ~1.7 GB/month but is ~44% of the
+  pixels, visibly soft on a phone, and the platforms re-encode from it.
+  Rejected: the video is the product.
+- **Re-encode server-side** is unavailable for the same reason poster
+  extraction is — Deno Edge Functions have no ffmpeg.
+- **Drop TikTok from the video fan-out** saves ~0.8 GB/month at zero quality
+  cost while TikTok is still `SELF_ONLY` (no public reach, so those pulls buy
+  nothing). Still available; not taken yet.
+- **Meta crossposting** — publish the Reel once and crosspost to the Page
+  instead of letting Meta pull a second time — saves ~0.8 GB/month but is a
+  real integration change.
+
+### The caching fix does far less than it looks
+
+`cache-control: no-cache` does **not** mean "do not cache", it means
+"revalidate before reuse", and a revalidation that matches costs no body
+bytes. Verified against the live endpoint: both `If-None-Match` and
+`If-Modified-Since` return **`304`**, `cf-cache-status: HIT`, no body. So a
+warm browser cache already costs ~0, and **Smart CDN / Pro is not worth
+buying for this** — the earlier note that repeat loads were "re-requested on
+every load" was wrong.
+
+What browser caching never covered is `<video>` range requests, which a
+media element services largely outside the normal HTTP cache. That is why the
+thumbnails were expensive and the `<img>` posters are not.
+
+---
+
 ## Verification checklist
 
 Status of every check, across all phases.

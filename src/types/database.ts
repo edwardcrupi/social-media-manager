@@ -56,6 +56,7 @@ export type PostRow = {
   trend_source: TrendSource | null
   media_url: string | null
   media_type: MediaType
+  poster_url: string | null
   video_job_id: string | null
   video_prompt: string | null
   platform_media_id: string | null
