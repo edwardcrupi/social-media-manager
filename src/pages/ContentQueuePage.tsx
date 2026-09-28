@@ -25,9 +25,23 @@ export function ContentQueuePage() {
   const [scheduledFor, setScheduledFor] = useState('')
   const [profileId, setProfileId] = useState('')
 
+  // Newest first. Sorted here rather than in `usePosts` because Overview's
+  // "Up next" panel takes the first five rows of that same query, where
+  // soonest-first is the whole point -- flipping the query would make it
+  // show the furthest-out posts instead.
+  const ordered = [...(posts ?? [])].sort((a, b) => {
+    // Unscheduled rows stay at the end in both directions, matching the
+    // query's `nullsFirst: false`.
+    if (!a.scheduled_for) return b.scheduled_for ? 1 : 0
+    if (!b.scheduled_for) return -1
+    // Parsed rather than string-compared: PostgREST can return a UTC offset
+    // per row, so these are not reliably lexicographically ordered.
+    return new Date(b.scheduled_for).getTime() - new Date(a.scheduled_for).getTime()
+  })
+
   // Group before paginating, so a page boundary can never fall through the
   // middle of one idea's platform rows.
-  const groups = groupBySharedMedia(posts ?? [])
+  const groups = groupBySharedMedia(ordered)
   const visible = groups.slice(0, shown)
   const hidden = Math.max(0, groups.length - visible.length)
 
