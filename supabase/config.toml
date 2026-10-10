@@ -413,3 +413,21 @@ enabled = true
 # formatted with uppercase keywords, indent 2, max width 180, trailing commas,
 # and column/key alignment. Set to "null" to emit raw, unformatted SQL.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":180,\"commaStyle\":\"trailing\"}"
+
+# Recorded explicitly because the deploy API retains whatever verify_jwt a
+# previous deploy set, so omitting the flag does NOT restore the default --
+# a single `--no-verify-jwt` sticks until something overrides it. These are
+# the functions touched by the 2026-09-28 egress work; the cron-invoked ones
+# are called with explicit apikey + Authorization headers, and save-poster is
+# called from the browser with the signed-in user's JWT.
+[functions.check-video-jobs]
+verify_jwt = true
+
+[functions.generate-trend-posts]
+verify_jwt = true
+
+[functions.save-poster]
+verify_jwt = true
+
+[functions.backfill-faststart]
+verify_jwt = true

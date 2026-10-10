@@ -3,16 +3,47 @@ import type { FormEvent } from 'react'
 import { usePosts, useCreatePost } from '../hooks/usePosts'
 import { useSocialProfiles } from '../hooks/useSocialProfiles'
 import { QueueList } from '../components/queue/QueueList'
+import { groupBySharedMedia } from '../lib/postGroups'
+
+// Ideas per page, not rows -- one idea is up to four platform rows.
+const PAGE_SIZE = 25
 
 export function ContentQueuePage() {
   const { data: posts, isLoading } = usePosts()
   const { data: profiles } = useSocialProfiles()
   const createPost = useCreatePost()
 
+  // The queue grows by several posts a day and is never pruned, so render a
+  // window of it rather than all 240-plus rows. This is render-side on
+  // purpose: usePosts stays unpaginated because Overview, Insights and
+  // Revenue all count and filter across the full set, and silently handing
+  // them a truncated list would quietly corrupt every number on those pages.
+  const [shown, setShown] = useState(PAGE_SIZE)
+
   const [title, setTitle] = useState('')
   const [tag, setTag] = useState('')
   const [scheduledFor, setScheduledFor] = useState('')
   const [profileId, setProfileId] = useState('')
+
+  // Newest first. Sorted here rather than in `usePosts` because Overview's
+  // "Up next" panel takes the first five rows of that same query, where
+  // soonest-first is the whole point -- flipping the query would make it
+  // show the furthest-out posts instead.
+  const ordered = [...(posts ?? [])].sort((a, b) => {
+    // Unscheduled rows stay at the end in both directions, matching the
+    // query's `nullsFirst: false`.
+    if (!a.scheduled_for) return b.scheduled_for ? 1 : 0
+    if (!b.scheduled_for) return -1
+    // Parsed rather than string-compared: PostgREST can return a UTC offset
+    // per row, so these are not reliably lexicographically ordered.
+    return new Date(b.scheduled_for).getTime() - new Date(a.scheduled_for).getTime()
+  })
+
+  // Group before paginating, so a page boundary can never fall through the
+  // middle of one idea's platform rows.
+  const groups = groupBySharedMedia(ordered)
+  const visible = groups.slice(0, shown)
+  const hidden = Math.max(0, groups.length - visible.length)
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -76,7 +107,20 @@ export function ContentQueuePage() {
       </section>
 
       <section className="panel queue-panel">
-        {isLoading ? <p className="empty-state">Loading…</p> : <QueueList posts={posts ?? []} />}
+        {isLoading ? (
+          <p className="empty-state">Loading…</p>
+        ) : (
+          <>
+            <QueueList groups={visible} profiles={profiles ?? []} />
+            {hidden > 0 && (
+              <div className="queue-more">
+                <button className="text-button" onClick={() => setShown((count) => count + PAGE_SIZE)}>
+                  Show {Math.min(hidden, PAGE_SIZE)} more ({hidden} older)
+                </button>
+              </div>
+            )}
+          </>
+        )}
       </section>
     </>
   )

@@ -5,7 +5,7 @@ import { useSocialProfiles, useCreateSocialProfile, useDeleteSocialProfile } fro
 import type { Accent, Platform } from '../types/database'
 import { supabase } from '../lib/supabase'
 
-const PLATFORMS: Platform[] = ['instagram', 'tiktok', 'pinterest', 'other']
+const PLATFORMS: Platform[] = ['instagram', 'tiktok', 'x', 'facebook', 'pinterest', 'other']
 const ACCENTS: Accent[] = ['coral', 'yellow', 'blue']
 
 export function ProfilesPage() {
@@ -20,18 +20,63 @@ export function ProfilesPage() {
   const [accent, setAccent] = useState<Accent>('coral')
   const [followerCount, setFollowerCount] = useState('')
   const [connectError, setConnectError] = useState('')
-  const [connecting, setConnecting] = useState(false)
+  const [connectingInstagram, setConnectingInstagram] = useState(false)
+  const [connectingTiktok, setConnectingTiktok] = useState(false)
+  const [connectingX, setConnectingX] = useState(false)
+  const [connectingFacebook, setConnectingFacebook] = useState(false)
 
   const igConnected = searchParams.get('ig_connected')
   const igError = searchParams.get('ig_error')
+  const ttConnected = searchParams.get('tt_connected')
+  const ttError = searchParams.get('tt_error')
+  const xConnected = searchParams.get('x_connected')
+  const xError = searchParams.get('x_error')
+  const fbConnected = searchParams.get('fb_connected')
+  const fbError = searchParams.get('fb_error')
 
   async function handleConnectInstagram() {
-    setConnecting(true)
+    setConnectingInstagram(true)
     setConnectError('')
     const { data, error } = await supabase.functions.invoke<{ url: string }>('instagram-oauth-start')
     if (error || !data?.url) {
       setConnectError(error?.message ?? 'Failed to start Instagram connection.')
-      setConnecting(false)
+      setConnectingInstagram(false)
+      return
+    }
+    window.location.href = data.url
+  }
+
+  async function handleConnectTiktok() {
+    setConnectingTiktok(true)
+    setConnectError('')
+    const { data, error } = await supabase.functions.invoke<{ url: string }>('tiktok-oauth-start')
+    if (error || !data?.url) {
+      setConnectError(error?.message ?? 'Failed to start TikTok connection.')
+      setConnectingTiktok(false)
+      return
+    }
+    window.location.href = data.url
+  }
+
+  async function handleConnectX() {
+    setConnectingX(true)
+    setConnectError('')
+    const { data, error } = await supabase.functions.invoke<{ url: string }>('x-oauth-start')
+    if (error || !data?.url) {
+      setConnectError(error?.message ?? 'Failed to start X connection.')
+      setConnectingX(false)
+      return
+    }
+    window.location.href = data.url
+  }
+
+  async function handleConnectFacebook() {
+    setConnectingFacebook(true)
+    setConnectError('')
+    const { data, error } = await supabase.functions.invoke<{ url: string }>('facebook-oauth-start')
+    if (error || !data?.url) {
+      setConnectError(error?.message ?? 'Failed to start Facebook connection.')
+      setConnectingFacebook(false)
       return
     }
     window.location.href = data.url
@@ -41,6 +86,12 @@ export function ProfilesPage() {
     const next = new URLSearchParams(searchParams)
     next.delete('ig_connected')
     next.delete('ig_error')
+    next.delete('tt_connected')
+    next.delete('tt_error')
+    next.delete('x_connected')
+    next.delete('x_error')
+    next.delete('fb_connected')
+    next.delete('fb_error')
     setSearchParams(next, { replace: true })
   }
 
@@ -72,21 +123,32 @@ export function ProfilesPage() {
         <div>
           <span className="eyebrow">Accounts</span>
           <h1>Profiles</h1>
-          <p>Add accounts manually, or connect Instagram directly for live follower counts.</p>
+          <p>Add accounts manually, or connect Instagram/TikTok/X/Facebook directly for live follower counts.</p>
         </div>
-        <button className="primary-button" onClick={handleConnectInstagram} disabled={connecting}>
-          {connecting ? 'Connecting…' : 'Connect Instagram'}
-        </button>
+        <div style={{ display: 'flex', gap: '0.75rem' }}>
+          <button className="primary-button" onClick={handleConnectInstagram} disabled={connectingInstagram}>
+            {connectingInstagram ? 'Connecting…' : 'Connect Instagram'}
+          </button>
+          <button className="primary-button" onClick={handleConnectTiktok} disabled={connectingTiktok}>
+            {connectingTiktok ? 'Connecting…' : 'Connect TikTok'}
+          </button>
+          <button className="primary-button" onClick={handleConnectX} disabled={connectingX}>
+            {connectingX ? 'Connecting…' : 'Connect X'}
+          </button>
+          <button className="primary-button" onClick={handleConnectFacebook} disabled={connectingFacebook}>
+            {connectingFacebook ? 'Connecting…' : 'Connect Facebook'}
+          </button>
+        </div>
       </div>
 
-      {igConnected && (
+      {(igConnected || ttConnected || xConnected || fbConnected) && (
         <p className="login-sent" onClick={dismissBanner} style={{ cursor: 'pointer' }}>
-          Instagram connected. (click to dismiss)
+          {igConnected ? 'Instagram' : ttConnected ? 'TikTok' : xConnected ? 'X' : 'Facebook'} connected. (click to dismiss)
         </p>
       )}
-      {(igError || connectError) && (
+      {(igError || ttError || xError || fbError || connectError) && (
         <p className="login-error" onClick={dismissBanner} style={{ cursor: 'pointer' }}>
-          {igError || connectError} (click to dismiss)
+          {igError || ttError || xError || fbError || connectError} (click to dismiss)
         </p>
       )}
 
@@ -125,6 +187,13 @@ export function ProfilesPage() {
           )}
         </form>
       </section>
+
+      {deleteProfile.isError && (
+        <p className="login-error" onClick={() => deleteProfile.reset()} style={{ cursor: 'pointer' }}>
+          {deleteProfile.error instanceof Error ? deleteProfile.error.message : 'Failed to remove profile.'} (click to
+          dismiss)
+        </p>
+      )}
 
       <section className="content-grid">
         {isLoading && <p className="empty-state">Loading…</p>}

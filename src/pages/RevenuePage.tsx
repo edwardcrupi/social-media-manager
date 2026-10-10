@@ -2,6 +2,12 @@ import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useRevenueEvents, useCreateRevenueEvent, useDeleteRevenueEvent } from '../hooks/useRevenueEvents'
 import { useShortLinks, useCreateShortLink, useDeleteShortLink, useLinkClickCounts } from '../hooks/useShortLinks'
+import {
+  useAffiliateOffers,
+  useCreateAffiliateOffer,
+  useDeleteAffiliateOffer,
+  useUpdateAffiliateOffer,
+} from '../hooks/useAffiliateOffers'
 import { usePosts } from '../hooks/usePosts'
 import { RevenueChart } from '../components/chart/RevenueChart'
 
@@ -10,6 +16,133 @@ const dateFormatter = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'n
 
 function shortLinkUrl(slug: string) {
   return `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redirect/${slug}`
+}
+
+// Phase 12 Step 1. Without at least one row here, every auto-generated post
+// goes out with no offer and nothing tracked -- which is what the entire
+// attribution stack was built for and then left idle. An offer pointing at
+// your own newsletter or landing page is a perfectly valid first row; it
+// doesn't have to wait on an affiliate network approving anything.
+function OffersPanel() {
+  const { data: offers, isLoading } = useAffiliateOffers()
+  const { data: links } = useShortLinks()
+  const { data: clickCounts } = useLinkClickCounts()
+  const createOffer = useCreateAffiliateOffer()
+  const updateOffer = useUpdateAffiliateOffer()
+  const deleteOffer = useDeleteAffiliateOffer()
+
+  const [programName, setProgramName] = useState('')
+  const [destinationUrl, setDestinationUrl] = useState('')
+  const [keywords, setKeywords] = useState('')
+  const [disclosure, setDisclosure] = useState('')
+
+  // Clicks per offer, aggregated client-side from the short links already
+  // loaded for the panel below -- same reasoning as useLinkClickCounts.
+  const clicksByOffer: Record<string, number> = {}
+  for (const link of links ?? []) {
+    if (!link.affiliate_offer_id) continue
+    clicksByOffer[link.affiliate_offer_id] =
+      (clicksByOffer[link.affiliate_offer_id] ?? 0) + (clickCounts?.[link.id] ?? 0)
+  }
+
+  const activeOffers = (offers ?? []).filter((offer) => offer.active)
+  const fallbackOfferId = activeOffers[0]?.id
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault()
+    if (!programName.trim() || !destinationUrl.trim()) return
+    createOffer.mutate(
+      {
+        program_name: programName.trim(),
+        destination_url: destinationUrl.trim(),
+        keywords: keywords
+          .split(',')
+          .map((keyword) => keyword.trim())
+          .filter(Boolean),
+        disclosure: disclosure.trim() || null,
+      },
+      {
+        onSuccess: () => {
+          setProgramName('')
+          setDestinationUrl('')
+          setKeywords('')
+          setDisclosure('')
+        },
+      },
+    )
+  }
+
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          <span className="eyebrow">Monetization</span>
+          <h2>Offers</h2>
+          <p className="panel-note">
+            Auto-generated posts get a tracked link to whichever of these fits the topic. With no active offer, posts
+            publish with nothing to click. Affiliate links need a disclosure — these posts publish with no review step.
+          </p>
+        </div>
+      </div>
+      <form className="composer" onSubmit={handleSubmit}>
+        <input placeholder="Program name" value={programName} onChange={(e) => setProgramName(e.target.value)} />
+        <input
+          placeholder="Destination URL"
+          value={destinationUrl}
+          onChange={(e) => setDestinationUrl(e.target.value)}
+        />
+        <input
+          placeholder="Topic keywords (comma-separated)"
+          value={keywords}
+          onChange={(e) => setKeywords(e.target.value)}
+        />
+        <input
+          placeholder="Disclosure (required for affiliate links)"
+          value={disclosure}
+          onChange={(e) => setDisclosure(e.target.value)}
+        />
+        <button className="primary-button" type="submit" disabled={createOffer.isPending}>
+          {createOffer.isPending ? 'Adding…' : 'Add offer'}
+        </button>
+        {createOffer.isError && (
+          <p className="login-error">
+            {createOffer.error instanceof Error ? createOffer.error.message : 'Failed to add offer.'}
+          </p>
+        )}
+      </form>
+
+      {isLoading && <p className="empty-state">Loading…</p>}
+      {offers?.length === 0 && <p className="empty-state">No offers yet — posts are publishing untracked.</p>}
+      <div className="queue-list">
+        {offers?.map((offer) => (
+          <div className="queue-item" key={offer.id}>
+            <div className="queue-title">
+              <strong>
+                {offer.program_name}
+                {!offer.active && ' (paused)'}
+                {offer.id === fallbackOfferId && ' · fallback'}
+              </strong>
+              <span>
+                {clicksByOffer[offer.id] ?? 0} click{clicksByOffer[offer.id] === 1 ? '' : 's'} · {offer.destination_url}
+                {offer.keywords.length > 0 ? ` · ${offer.keywords.join(', ')}` : ''}
+                {offer.active && !offer.disclosure ? ' · no disclosure set' : ''}
+              </span>
+            </div>
+            <button
+              className="outline-button"
+              style={{ width: 'auto' }}
+              onClick={() => updateOffer.mutate({ id: offer.id, active: !offer.active })}
+            >
+              {offer.active ? 'Pause' : 'Activate'}
+            </button>
+            <button className="more-button" onClick={() => deleteOffer.mutate(offer.id)} aria-label="Delete">
+              x
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
 }
 
 function ShortLinksPanel() {
@@ -161,6 +294,8 @@ export function RevenuePage() {
         </div>
         <RevenueChart events={chartEvents} />
       </section>
+
+      <OffersPanel />
 
       <ShortLinksPanel />
 

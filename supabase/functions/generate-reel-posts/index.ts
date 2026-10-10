@@ -7,6 +7,19 @@
 // completion and turns a finished job into a publishable post.
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0'
 import { createClient } from 'npm:@supabase/supabase-js@2.116.0'
+import {
+  campaignSlug,
+  captionForPlatform,
+  fetchActiveOffers,
+  fetchPerformanceDigest,
+  insertShortLinks,
+  newSlug,
+  offerPromptLines,
+  resolveOffer,
+  shortLinkUrl,
+  xCaptionPromptLines,
+} from '../_shared/monetization.ts'
+import type { PendingShortLink } from '../_shared/monetization.ts'
 
 interface ReelIdea {
   title: string
@@ -15,6 +28,12 @@ interface ReelIdea {
   tag: string
   source_url: string
   source_summary: string
+  // Drafted natively for X rather than truncated from `body` -- see
+  // captionForPlatform. Optional: the code falls back to truncation.
+  x_caption?: unknown
+  // Present only when the user has active affiliate_offers -- validated
+  // against the real offer list before use, never trusted as an id.
+  offer_id?: unknown
 }
 
 const ARK_BASE_URL = 'https://ark.ap-southeast.bytepluses.com/api/v3'
@@ -97,30 +116,42 @@ Deno.serve(async (req) => {
       const startOfDay = new Date()
       startOfDay.setHours(0, 0, 0, 0)
 
-      const { count: alreadyToday } = await supabase
+      // daily_reel_cap counts distinct ideas, not post rows -- see the same
+      // comment in generate-trend-posts. All rows for the same idea share
+      // the same title, so distinct titles today is the idea count.
+      const { data: todaysRows } = await supabase
         .from('posts')
-        .select('id', { count: 'exact', head: true })
+        .select('title')
         .eq('user_id', userId)
         .eq('source', 'auto')
         .eq('media_type', 'video')
         .gte('created_at', startOfDay.toISOString())
+      const alreadyToday = new Set((todaysRows ?? []).map((row) => row.title)).size
 
       // Capped at 2 per invocation regardless of daily_reel_cap, same
       // reasoning as generate-trend-posts: protects against one huge,
       // expensive run if the cap is set high.
-      const remaining = Math.min(2, Math.max(0, settings.daily_reel_cap - (alreadyToday ?? 0)))
+      const remaining = Math.min(2, Math.max(0, settings.daily_reel_cap - alreadyToday))
       if (remaining === 0) {
         results.push({ userId, created: 0, reason: 'daily reel cap already reached' })
         continue
       }
 
-      const { data: instagramProfile } = await supabase
+      // Unlike generate-trend-posts, TikTok is included here -- it only
+      // supports video, which is exactly what this function produces.
+      const { data: eligibleProfiles } = await supabase
         .from('social_profiles')
-        .select('id')
+        .select('id, platform')
         .eq('user_id', userId)
-        .eq('platform', 'instagram')
+        .in('platform', ['instagram', 'tiktok', 'x', 'facebook'])
         .eq('connection_status', 'connected')
-        .maybeSingle()
+
+      // Phase 12 Step 1: every post gets a tracked link to one of these.
+      // No offers configured is a valid state (posts just go out untracked,
+      // as they did before this phase) -- it must not break generation.
+      const offers = await fetchActiveOffers(supabase, userId)
+      // Phase 12 Step 3: omitted entirely below the minimum post count.
+      const performanceDigest = await fetchPerformanceDigest(supabase, userId)
 
       const blocklist: string[] = settings.topic_blocklist ?? []
       const prompt = [
@@ -130,9 +161,40 @@ Deno.serve(async (req) => {
         `For each trend, describe a ${VIDEO_DURATION_SECONDS}-second vertical (9:16) video Reel concept and a short caption in this brand voice: ${settings.brand_voice || 'clear, friendly, conversational'}.`,
         'Each concept must reference a real, specific, currently-trending item you found via search -- do not invent trends.',
         'The video_prompt should describe visuals, motion, and pacing concretely enough for a text-to-video model to render -- not just restate the headline.',
+        // Instagram Reels overlays its own UI (captions bar, profile info,
+        // like/comment icons) across the outer margin of the frame, and a
+        // model given no sizing guidance tends to render on-screen text
+        // edge-to-edge -- which then reads as cut off in the actual app even
+        // though the raw video technically contains it in full.
+        'If the video_prompt calls for any on-screen headline or caption text, this is a hard constraint, not a preference: keep it within Instagram Reels\' safe zone, centered horizontally, sized to fit comfortably within the middle 76% of the frame width, wrapped across as many short lines as it takes (two, three, or four) rather than ever sizing a line to span edge-to-edge, with a clear empty margin of at least 12% of the frame on every edge that no character may enter.',
+        // Seedance's own content-moderation rejects finished videos outright
+        // (no partial credit, no retry within the same job) for scenes it
+        // reads as depicting the categories below -- discovered after a
+        // real generation was flagged and silently dropped for a scene
+        // built around covert/hidden-camera filming. These instructions
+        // steer the *visual* description away from literal depictions of
+        // sensitive scenarios, even when the underlying news topic itself
+        // is fine to cover in the caption/title.
+        'The video_prompt must avoid visuals that commonly trigger video-generation content moderation, even when the underlying news topic is otherwise fine to reference in the title/caption: no depictions of covert or hidden-camera filming/surveillance/spying, no realistic violence, weapons, or gore, no sexual or suggestive content, no self-harm, no illegal drug use, no hate symbols or extremist imagery, and no real, identifiable private individuals shown in a compromising or defamatory situation.',
+        'Prefer visual metaphors, graphics, text-on-screen, or abstract/symbolic representation over literally staging a sensitive scenario -- e.g. depict a story about surveillance via glowing data streams or an eye-shaped icon rather than a person secretly filming someone.',
+        // A second real rejection (2026-09-18, "the output video may contain
+        // sensitive information") hit a prompt with no obviously sensitive
+        // subject matter at all -- just an AI story illustrated as one
+        // glowing orb literally assembling a second, smaller orb beneath it,
+        // i.e. an AI autonomously building/replicating another AI. That
+        // recursive self-improvement imagery is the most likely trigger, so
+        // steer away from depicting it literally the same way surveillance
+        // imagery is steered away from above, without banning AI-building-AI
+        // stories from being covered at all.
+        'When the story is about one AI system training, building, or improving another AI system, avoid depicting that literally as one entity autonomously constructing, assembling, or replicating a copy of another (e.g. an orb building a smaller orb, a robot building another robot) -- prefer a visual metaphor that implies progress or capability growth without showing autonomous self-replication, such as a single evolving/upgrading shape, a growing network graph, an ascending chart, or a tool being refined on a workbench by an unseen hand.',
+        ...offerPromptLines(offers),
+        ...xCaptionPromptLines(offers, settings.x_inline_links_enabled === true),
+        performanceDigest ?? '',
         '',
         'Respond with ONLY a JSON array (no markdown fences, no prose before or after) of objects shaped exactly like:',
-        '{"title": string, "video_prompt": string, "caption": string, "tag": string, "source_url": string, "source_summary": string}',
+        offers.length > 0
+          ? '{"title": string, "video_prompt": string, "caption": string, "tag": string, "source_url": string, "source_summary": string, "x_caption": string, "offer_id": string}'
+          : '{"title": string, "video_prompt": string, "caption": string, "tag": string, "source_url": string, "source_summary": string, "x_caption": string}',
       ]
         .filter(Boolean)
         .join(' ')
@@ -166,6 +228,7 @@ Deno.serve(async (req) => {
       const jobResults = await Promise.allSettled(ideas.map((idea) => submitVideoJob(arkApiKey, idea)))
 
       const rows = []
+      const pendingLinks: PendingShortLink[] = []
       const submitFailures: string[] = []
       for (let index = 0; index < ideas.length; index++) {
         const idea = ideas[index]
@@ -175,18 +238,62 @@ Deno.serve(async (req) => {
           submitFailures.push(reason instanceof Error ? reason.message : 'video job submission failed')
           continue
         }
-        rows.push({
+        const offer = resolveOffer(offers, idea.offer_id)
+        const base = {
           user_id: userId,
-          social_profile_id: instagramProfile?.id ?? null,
           title: idea.title,
-          body: idea.caption,
           tag: idea.tag,
           status: 'generating' as const,
           source: 'auto' as const,
           media_type: 'video' as const,
           video_job_id: jobResult.value,
+          video_prompt: idea.video_prompt,
           trend_source: { url: idea.source_url, summary: idea.source_summary },
-        })
+        }
+        // Fan out to every connected eligible profile -- the video job is
+        // only submitted once per idea above, so every row here shares the
+        // same video_job_id. check-video-jobs groups by video_job_id so the
+        // finished render is only downloaded/re-uploaded once and applied to
+        // every matching row, not once per platform.
+        const targets: { id: string | null; platform: string | null }[] =
+          eligibleProfiles && eligibleProfiles.length > 0
+            ? eligibleProfiles.map((profile) => ({ id: profile.id as string, platform: profile.platform as string }))
+            : [{ id: null, platform: null }]
+
+        for (const target of targets) {
+          // One short link per post row -- see the same comment in
+          // generate-trend-posts. The post id is generated here so the links
+          // can be built before the insert without relying on PostgREST
+          // returning inserted rows in input order.
+          const postId = crypto.randomUUID()
+          const slug = offer ? newSlug() : null
+          const linkUrl = slug ? shortLinkUrl(supabaseUrl, slug) : null
+          rows.push({
+            ...base,
+            id: postId,
+            social_profile_id: target.id,
+            body: captionForPlatform({
+              platform: target.platform,
+              body: idea.caption,
+              xCaption: idea.x_caption,
+              url: linkUrl,
+              xInlineLinksEnabled: settings.x_inline_links_enabled === true,
+              disclosure: offer?.disclosure ?? null,
+            }),
+          })
+          if (offer && slug) {
+            pendingLinks.push({
+              user_id: userId,
+              post_id: postId,
+              slug,
+              destination_url: offer.destination_url,
+              affiliate_offer_id: offer.id,
+              utm_source: target.platform ?? 'unassigned',
+              utm_medium: 'social',
+              utm_campaign: campaignSlug(idea.tag),
+            })
+          }
+        }
       }
 
       if (rows.length > 0) {
@@ -194,9 +301,22 @@ Deno.serve(async (req) => {
         if (insertError) throw insertError
       }
 
+      // After the posts insert, never before: short_links.post_id is a real
+      // FK, and a link whose post failed to insert would be orphaned.
+      const linkResult = pendingLinks.length > 0
+        ? await insertShortLinks(supabase, pendingLinks)
+        : { inserted: 0, failed: [] as string[] }
+
       results.push({
         userId,
         submitted: rows.length,
+        linksCreated: linkResult.inserted,
+        // A failed link means a published caption may point at a slug that
+        // resolves to nothing -- worth seeing in the invocation output rather
+        // than only discovering from a dead click.
+        ...(linkResult.failed.length > 0 ? { failedLinkSlugs: linkResult.failed } : {}),
+        ...(offers.length === 0 ? { note: 'no active affiliate_offers -- posts created without tracked links' } : {}),
+        ...(performanceDigest ? { performanceDigest: 'included' } : {}),
         ...(submitFailures.length > 0 ? { submitFailures } : {}),
       })
     } catch (error) {
